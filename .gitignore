@@ -1,0 +1,90 @@
+# ----------------------------
+# Python
+# ----------------------------
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Virtual Environments
+venv/
+.venv/
+env/
+ENV/
+
+# Python Packaging
+build/
+dist/
+*.egg-info/
+.eggs/
+
+# ----------------------------
+# IDEs
+# ----------------------------
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# ----------------------------
+# Jupyter
+# ----------------------------
+.ipynb_checkpoints/
+
+# ----------------------------
+# Logs
+# ----------------------------
+*.log
+logs/
+*.out
+
+# ----------------------------
+# Environment Variables
+# ----------------------------
+.env
+.env.*
+
+# ----------------------------
+# OS Files
+# ----------------------------
+.DS_Store
+Thumbs.db
+
+# ----------------------------
+# Test & Cache
+# ----------------------------
+.pytest_cache/
+.mypy_cache/
+.cache/
+coverage/
+htmlcov/
+.coverage
+.coverage.*
+
+# ----------------------------
+# Benchmark Outputs (optional)
+# Uncomment if reports should not be versioned
+# ----------------------------
+# reports/
+# results/
+# benchmark_output/
+# *.csv
+
+# ----------------------------
+# Ollama / Local Models
+# ----------------------------
+models/
+downloads/
+
+# ----------------------------
+# Temporary Files
+# ----------------------------
+tmp/
+temp/
+*.tmp
+*.bak
+
+# ----------------------------
+# Miscellaneous
+# ----------------------------
+*.sqlite3
