@@ -1,15 +1,17 @@
-import random
 import tiktoken
 
 enc = tiktoken.get_encoding("cl100k_base")
 
+
 def load_filler(path: str) -> str:
-    with open(path, 'r', encoding='utf-8') as f:
+    with open(path, encoding="utf-8") as f:
         return f.read()
 
+
 def load_needles(path: str) -> list:
-    with open(path, 'r', encoding='utf-8') as f:
+    with open(path, encoding="utf-8") as f:
         return [line.strip() for line in f if line.strip()]
+
 
 def create_haystack(filler: str, needle: str, target_tokens: int, depth: float) -> str:
     """Insert needle at a specific depth (0.0=start, 1.0=end)."""
@@ -31,6 +33,7 @@ def create_haystack(filler: str, needle: str, target_tokens: int, depth: float) 
 
     final_text = base_text[:insert_pos] + f"\n\n[IMPORTANT SECRET]: {needle}\n\n" + base_text[insert_pos:]
     return final_text
+
 
 def count_tokens(text: str) -> int:
     return len(enc.encode(text))

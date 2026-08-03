@@ -1,9 +1,7 @@
 import csv
-import sys
-from pathlib import Path
 
 
-def csv_to_markdown(csv_file = "results/benchmarking_raw.csv", md_file = "bench.md"):
+def csv_to_markdown(csv_file="results/benchmarking_raw.csv", md_file="bench.md"):
     with open(csv_file, newline="", encoding="utf-8") as f:
         reader = csv.reader(f)
         rows = list(reader)
@@ -22,11 +20,10 @@ def csv_to_markdown(csv_file = "results/benchmarking_raw.csv", md_file = "bench.
         for row in rows[1:]:
             # Pad short rows if necessary
             row += [""] * (len(header) - len(row))
-            f.write("| " + " | ".join(row[:len(header)]) + " |\n")
+            f.write("| " + " | ".join(row[: len(header)]) + " |\n")
 
     print(f"Markdown table written to {md_file}")
 
 
 if __name__ == "__main__":
-
     csv_to_markdown()
