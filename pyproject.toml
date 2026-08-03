@@ -1,0 +1,90 @@
+[project]
+name = "probebench"
+version = "0.1.0"
+description = "A benchmarking toolkit for evaluating large language models using needle-in-a-haystack context retrieval and response analysis."
+readme = "README.md"
+authors = [
+    { name = "SumeetBhosale17", email = "sumeetbhosale1947@gmail.com" },
+    { name = "SiddhatKore", email = "siddhskore@gmail.com" },
+    { name = "MukulKumbhar", email = "mukulkumbher2005@gmail.com" }
+]
+requires-python = ">=3.12"
+dependencies = [
+    "annotated-types==0.8.0",
+    "anyio==4.14.2",
+    "certifi==2026.7.22",
+    "charset-normalizer==3.4.9",
+    "contourpy==1.3.3",
+    "cycler==0.12.1",
+    "fonttools==4.63.0",
+    "h11==0.16.0",
+    "httpcore==1.0.9",
+    "httpx==0.28.1",
+    "idna==3.18",
+    "kiwisolver==1.5.0",
+    "matplotlib==3.11.1",
+    "numpy==2.5.1",
+    "ollama==0.6.2",
+    "packaging==26.2",
+    "pandas==3.0.5",
+    "pillow==12.3.0",
+    "pydantic==2.13.4",
+    "pydantic-core==2.46.4",
+    "pyparsing==3.3.2",
+    "python-dateutil==2.9.0.post0",
+    "regex==2026.7.19",
+    "requests==2.34.2",
+    "six==1.17.0",
+    "tabulate==0.10.0",
+    "tiktoken==0.13.0",
+    "tqdm==4.70.0",
+    "typing-extensions==4.16.0",
+    "typing-inspection==0.4.2",
+    "urllib3==2.7.0",
+]
+
+[project.scripts]
+probebench = "probebench:main"
+
+[build-system]
+requires = ["uv_build>=0.12.1,<0.13.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "pre-commit>=4.6.1",
+    "pyright>=1.1.411",
+    "pytest>=9.1.1",
+    "ruff>=0.16.1",
+]
+
+[tool.ruff]
+line-length = 200
+target-version = "py312"
+
+[tool.ruff.lint]
+select = [
+    "E",
+    "F",
+    "I",
+    "UP",
+    "B",
+    "SIM",
+]
+
+ignore = []
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+
+[tool.pyright]
+include = ["src", "tests"]
+typeCheckingMode = "standard"
+
+venvPath = "."
+venv = ".venv"
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
