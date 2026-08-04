@@ -1,11 +1,14 @@
-import pandas as pd
 import logging
-from src.generator import load_filler, load_needles, create_haystack, count_tokens
-from src.tester import MODEL, run_query, evaluate_accuracy
+
+import pandas as pd
+
+from src.probebench.generator import count_tokens, create_haystack, load_filler, load_needles
+from src.probebench.tester import MODEL, evaluate_accuracy, run_query
 
 # Configure logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
+
 
 def main():
     logger.info("Loading data files...")
@@ -39,18 +42,11 @@ def main():
 
                     question = "What is the important secret mentioned in the text?"
                     logger.info(f"Sending query (Tokens: {actual_tokens})...")
-                    
+
                     answer, latency = run_query(context, question)
                     success = evaluate_accuracy(answer, needle)
 
-                    results.append({
-                        "context_tokens": actual_tokens,
-                        "depth": depth,
-                        "needle": needle,
-                        "predicted": answer,
-                        "success": success,
-                        "latency_sec": latency
-                    })
+                    results.append({"context_tokens": actual_tokens, "depth": depth, "needle": needle, "predicted": answer, "success": success, "latency_sec": latency})
 
                     status = "✅" if success else "❌"
                     logger.info(f"[{status}] Tokens: {actual_tokens}, Depth: {depth}, Latency: {latency:.2f}s")
@@ -61,15 +57,10 @@ def main():
 
     if results:
         df = pd.DataFrame(results)
-        df['context_tokens_binned'] = (df['context_tokens'] / 1000).round() * 1000
+        df["context_tokens_binned"] = (df["context_tokens"] / 1000).round() * 1000
         df.to_csv("results/benchmarking_raw.csv", index=False)
 
-        summary = df.pivot_table(
-            index="context_tokens_binned", 
-            columns="depth", 
-            values="success", 
-            aggfunc="mean"
-        ).fillna(0)
+        summary = df.pivot_table(index="context_tokens_binned", columns="depth", values="success", aggfunc="mean").fillna(0)
         summary.to_markdown("results/summary_report.md")
         logger.info("\nReport saved to results/summary_report.md")
         print(summary)
@@ -77,5 +68,5 @@ def main():
         logger.error("No results generated. Check logs for errors.")
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()
