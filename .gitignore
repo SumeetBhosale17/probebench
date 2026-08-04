@@ -88,3 +88,139 @@ temp/
 # Miscellaneous
 # ----------------------------
 *.sqlite3
+
+
+# =========================
+# Python
+# =========================
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.pyd
+*.pyo
+
+# Distribution / packaging
+build/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# =========================
+# Virtual Environments
+# =========================
+.venv/
+venv/
+env/
+ENV/
+.python-version
+
+# =========================
+# Streamlit
+# =========================
+.streamlit/secrets.toml
+
+# (Keep config.toml if you want project-wide settings)
+# .streamlit/config.toml
+
+# =========================
+# Environment Variables
+# =========================
+.env
+.env.*
+!.env.example
+
+# =========================
+# Logs
+# =========================
+*.log
+logs/
+log/
+
+# =========================
+# Testing
+# =========================
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.nox/
+.cache/
+coverage.xml
+
+# =========================
+# Type Checkers
+# =========================
+.mypy_cache/
+.pyre/
+.pytype/
+
+# =========================
+# Jupyter
+# =========================
+.ipynb_checkpoints/
+
+# =========================
+# IDEs
+# =========================
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# =========================
+# OS Files
+# =========================
+.DS_Store
+Thumbs.db
+
+# =========================
+# Ruff / Black / isort
+# =========================
+.ruff_cache/
+
+# =========================
+# PyInstaller
+# =========================
+*.manifest
+*.spec
+
+# =========================
+# SQLite Databases
+# =========================
+*.sqlite3
+*.db
+
+# =========================
+# Temporary Files
+# =========================
+tmp/
+temp/
+*.tmp
+
+# =========================
+# Misc
+# =========================
+*.bak
+*.orig
+
+# =========================
+# Local Secrets
+# =========================
+secrets/
+credentials/
+*.pem
+*.key
+*.crt
