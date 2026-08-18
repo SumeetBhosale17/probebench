@@ -1,71 +1,155 @@
 import logging
+from pathlib import Path
 
-import pandas as pd
+from probebench.benchmarks.long_range_dependency.NIAH.benchmark import (
+    NiahBenchmark,
+)
+from probebench.core.runner import BenchmarkRunner
+from probebench.evaluation.long_range_dependency.NIAH.lexical import (
+    LexicalEvaluator,
+)
+from probebench.evaluation.long_range_dependency.NIAH.semantic import (
+    EmbeddingSemanticEvaluator,
+)
+from probebench.models.ollama import OllamaModel
+from probebench.reporting.csv import (
+    result_to_dataframe,
+    write_results_csv,
+)
+from probebench.reporting.markdown import (
+    write_long_range_summary,
+)
 
-from src.probebench.generator import count_tokens, create_haystack, load_filler, load_needles
-from src.probebench.tester import MODEL, evaluate_accuracy, run_query
-
-# Configure logging
-logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 
 
-def main():
-    logger.info("Loading data files...")
-    filler = load_filler("data/filler_text.txt")
-    needles = load_needles("data/needles.txt")
+def run_long_range_dependency(
+    model_name: str = "llama3.1:8b",
+    judge_model_name: str | None = None,
+    embedding_model_name: str = "nomic-embed-text",
+) -> None:
 
-    if not filler:
-        logging.error("Filler text is empty! Check data/filler_text.txt")
-        return
+    logger.info(
+        "Starting Needle-in-a-haystack benchmark with model=%s",
+        model_name,
+    )
+
+    model = OllamaModel(
+        model_name=model_name,
+    )
+
+    judge = OllamaModel(
+        model_name=judge_model_name if judge_model_name else model_name,
+    )
+
+    semantic_evaluator = EmbeddingSemanticEvaluator(
+        embedder=lambda text: model.embed(
+            model=embedding_model_name,
+            text=text,
+        )
+    )
+
+    evaluators = [
+        LexicalEvaluator(),
+        semantic_evaluator,
+        judge,
+    ]
+
+    benchmark = NiahBenchmark(
+        filler_path=("data/long_range_dependency/NIAH/filler_text.txt"),
+        needles_path=("data/long_range_dependency/NIAH/needles.txt"),
+        target_tokens=[
+            4_000,
+            8_000,
+            16_000,
+            32_000,
+        ],
+        depths=[
+            0.00,
+            0.25,
+            0.50,
+            0.75,
+            1.00,
+        ],
+        needles_per_configuration=5,
+        context_buffer_tokens=512,
+        max_context_tokens=32_768,
+    )
+
+    cases = benchmark.cases_as_generic()
+
+    logger.info(
+        "Generated %d benchmark cases.",
+        len(cases),
+    )
+
+    runner = BenchmarkRunner(
+        model=model,
+        evaluators=evaluators,
+    )
 
     results = []
 
-    target_tokens = [4000, 8000, 16000, 32000]
-    depths = [0.0, 0.5, 1.0]
+    for index, case in enumerate(cases, start=1):
+        logger.info(
+            "[%d/%d] Running %s",
+            index,
+            len(cases),
+            case.case_id,
+        )
 
-    logger.info(f"Starting benchmark for {MODEL}...")
-    logger.info(f"Total filler size: {len(filler)} chars")
+        result = runner.run_case(case)
 
-    for tokens in target_tokens:
-        for depth in depths:
-            for needle in needles[:3]:
-                logger.info(f"Generating haystack: {tokens} tokens, depth {depth}...")
+        results.append(result)
 
-                try:
-                    context = create_haystack(filler, needle, tokens, depth)
-                    actual_tokens = count_tokens(context)
+        logger.info(
+            "[%s] lexical=%.3f semantic=%.3f judge=%.3f latency=%.2f",
+            case.case_id,
+            result.metrics["lexical"],
+            result.metrics["semantic_similarity"],
+            result.metrics["llm_judge"],
+            result.latency_sec,
+        )
 
-                    if actual_tokens > 35000:
-                        logger.warning(f"Skipping test: Generated {actual_tokens} tokens (Limit: 35k)")
-                        continue
+    output_csv = Path("results/raw/long_range_dependency/NIAH/benchmarking_raw.csv")
+    output_md = Path("results/reports/long_range_dependency/NIAH/summary_report.md")
 
-                    question = "What is the important secret mentioned in the text?"
-                    logger.info(f"Sending query (Tokens: {actual_tokens})...")
+    write_results_csv(
+        results,
+        output_csv,
+    )
 
-                    answer, latency = run_query(context, question)
-                    success = evaluate_accuracy(answer, needle)
+    dataframe = result_to_dataframe(results)
+    write_long_range_summary(
+        dataframe,
+        output_md,
+    )
 
-                    results.append({"context_tokens": actual_tokens, "depth": depth, "needle": needle, "predicted": answer, "success": success, "latency_sec": latency})
+    logger.info("Raw results written to %s", output_csv)
+    logger.info(
+        "Summary written to %s",
+        output_md,
+    )
 
-                    status = "✅" if success else "❌"
-                    logger.info(f"[{status}] Tokens: {actual_tokens}, Depth: {depth}, Latency: {latency:.2f}s")
+    print("\nEvaluation summary:")
+    print(
+        dataframe[
+            [
+                "lexical",
+                "semantic_similarity",
+                "llm_judge",
+            ]
+        ].mean()
+    )
 
-                except Exception as e:
-                    logger.error(f"Test failed completely: {e}")
-                    continue
 
-    if results:
-        df = pd.DataFrame(results)
-        df["context_tokens_binned"] = (df["context_tokens"] / 1000).round() * 1000
-        df.to_csv("results/benchmarking_raw.csv", index=False)
+def main() -> None:
+    logging.basicConfig(
+        level=logging.INFO,
+        format=("%(asctime)s - %(levelname)s - %(message)s"),
+    )
 
-        summary = df.pivot_table(index="context_tokens_binned", columns="depth", values="success", aggfunc="mean").fillna(0)
-        summary.to_markdown("results/summary_report.md")
-        logger.info("\nReport saved to results/summary_report.md")
-        print(summary)
-    else:
-        logger.error("No results generated. Check logs for errors.")
+    run_long_range_dependency()
 
 
 if __name__ == "__main__":

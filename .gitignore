@@ -5,6 +5,10 @@ __pycache__/
 *.py[cod]
 *$py.class
 *.so
+.pytest_cache/
+.ruff_cache/
+.pyright/
+.mypy_cache/
 
 # Virtual Environments
 venv/
@@ -73,7 +77,6 @@ htmlcov/
 # ----------------------------
 # Ollama / Local Models
 # ----------------------------
-models/
 downloads/
 
 # ----------------------------
