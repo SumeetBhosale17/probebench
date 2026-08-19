@@ -4,6 +4,7 @@ from typing import Any
 
 from probebench.core.case import BenchmarkCase
 
+
 @dataclass
 class EvaluationResult:
     """Result produced by one evaluator."""
@@ -11,6 +12,7 @@ class EvaluationResult:
     name: str
     score: float
     metadata: dict[str, Any] = field(default_factory=dict)
+
 
 class Evaluator(ABC):
     """Interface implemented by all Probebench Evaluators."""
@@ -26,11 +28,14 @@ class Evaluator(ABC):
         """Evaluate a model response."""
         raise NotImplementedError
 
-def validate_score(score: float) -> float:
-    """Ensure every evaluator returns a score in [0, 1]."""
 
-    if not 0.0 <= score <= 1.0:
-        raise ValueError(
-            f"Evaluation score must be in [0, 1], got {score}."
-        )
+def validate_score(
+    score: float,
+    minimum: float = 0.0,
+    maximum: float = 1.0,
+) -> float:
+    """Ensure an evaluator's score falls within its allowed range."""
+
+    if not minimum <= score <= maximum:
+        raise ValueError(f"Evaluation score must be in [{minimum}, {maximum}], got {score}.")
     return float(score)

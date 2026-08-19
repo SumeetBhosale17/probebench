@@ -8,21 +8,21 @@ Use the expected answer for reference.
 
 Scoring: should be in [0, 1], example:
 
-1.0 
+1.0
 Fully correct. The response identified the expected answer.
 
-0.75 
+0.75
 Mostly correct, with a minor formatting or presentation issue.
 
-0.50 
-Partially correct. Some relevant information is present, but the 
+0.50
+Partially correct. Some relevant information is present, but the
 answer is incomplete or ambiguous.
 
-0.25 
+0.25
 The response is related to the task but does not establish the
 correct answer.
 
-0.0 
+0.0
 Incorrect. The response gives a wrong answer or fails to answer
 the question.
 
@@ -32,10 +32,11 @@ incorrect even if it looks semantically similar.
 Return only JSON matching the request schema.
 """.strip()
 
+
 def build_judge_prompt(
-        question: str,
-        expected: str,
-        predicted: str,
+    question: str,
+    expected: str,
+    predicted: str,
 ) -> str:
     return f"""
 QUESTION:

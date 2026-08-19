@@ -1,5 +1,6 @@
 from abc import ABC, abstractmethod
 
+
 class EmbeddingProvider(ABC):
     """Provider capable of generating embeddings."""
 

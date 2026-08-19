@@ -4,18 +4,13 @@ from probebench.models.ollama_embeddings import OllamaEmbeddingProvider
 
 
 def create_embedding_provider(
-        config: EmbeddingConfig,
+    config: EmbeddingConfig,
 ) -> EmbeddingProvider | None:
 
     if not config.enabled:
         return None
 
     if config.provider == "ollama":
-        return OllamaEmbeddingProvider(
-            model_name=config.model
-        )
+        return OllamaEmbeddingProvider(model_name=config.model)
 
-    raise ValueError(
-        f"Unsupported embedding provider: "
-        f"{config.provider}"
-    )
+    raise ValueError(f"Unsupported embedding provider: {config.provider}")

@@ -15,6 +15,7 @@ class ModelInfo:
     quantization: str | None = None
 
     context_length: int | None = None
+    context_length_source: str | None = None
 
     capabilities: list[str] | None = None
 
@@ -79,20 +80,11 @@ class OllamaModelRegistry:
 
         details = response.details
 
-        model_info = dict(
-            response.modelinfo or {}
-        )
+        model_info = dict(response.modelinfo or {})
 
-        capabilities = [
-            str(capability)
-            for capability in (
-                response.capabilities or []
-            )
-        ]
+        capabilities = [str(capability) for capability in (response.capabilities or [])]
 
-        context_length = self._find_context_length(
-            model_info
-        )
+        context_length, context_length_source = self._find_context_length(model_info)
 
         tokenizer_model = self._find_string(
             model_info,
@@ -105,11 +97,7 @@ class OllamaModelRegistry:
         )
 
         raw = {
-            "details": (
-                details.model_dump()
-                if details is not None
-                else {}
-            ),
+            "details": (details.model_dump() if details is not None else {}),
             "model_info": model_info,
             "capabilities": capabilities,
             "parameters": response.parameters,
@@ -135,6 +123,7 @@ class OllamaModelRegistry:
                 None,
             ),
             context_length=context_length,
+            context_length_source=context_length_source,
             capabilities=capabilities,
             tokenizer_model=tokenizer_model,
             tokenizer_pre=tokenizer_pre,
@@ -144,7 +133,7 @@ class OllamaModelRegistry:
     @staticmethod
     def _find_context_length(
         model_info: dict[str, Any],
-    ) -> int | None:
+    ) -> tuple[int | None, str | None]:
         """
         Find the architecture-specific context length.
 
@@ -152,16 +141,15 @@ class OllamaModelRegistry:
             qwen3.context_length
             llama.context_length
             gemma.context_length
+
+        Returns the value together with the model_info key it was
+        found under, so callers can tell a real match from a fallback.
         """
 
         # Preferred approach: architecture-specific field.
         for key, value in model_info.items():
-
-            if key.endswith(
-                ".context_length"
-            ):
-                if isinstance(value, int):
-                    return value
+            if key.endswith(".context_length") and isinstance(value, int):
+                return value, key
 
         # Defensive fallbacks.
         for key in (
@@ -174,9 +162,9 @@ class OllamaModelRegistry:
             value = model_info.get(key)
 
             if isinstance(value, int):
-                return value
+                return value, key
 
-        return None
+        return None, None
 
     @staticmethod
     def _find_string(

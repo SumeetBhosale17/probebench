@@ -1,5 +1,6 @@
 from dataclasses import dataclass
 
+
 @dataclass
 class NiahCase:
     """Input defining one long-range dependency experiment."""

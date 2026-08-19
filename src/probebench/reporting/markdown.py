@@ -39,20 +39,14 @@ def write_long_range_summary(
     ]
 
     if dataframe.empty:
-        lines.append(
-            "No benchmark results were generated."
-        )
+        lines.append("No benchmark results were generated.")
         path.write_text(
             "\n".join(lines),
             encoding="utf-8",
         )
         return
 
-    overall_metrics = (
-        dataframe[metric_columns]
-        .mean()
-        .to_frame("mean_score")
-    )
+    overall_metrics = dataframe[metric_columns].mean().to_frame("mean_score")
 
     lines.extend(
         [
@@ -66,10 +60,7 @@ def write_long_range_summary(
     if "context_tokens" in dataframe.columns:
         context_metrics = cast(
             pd.DataFrame,
-            dataframe.groupby(
-                "context_tokens"
-            )[metric_columns]
-            .mean(),
+            dataframe.groupby("context_tokens")[metric_columns].mean(),
         )
 
         lines.extend(
@@ -84,10 +75,7 @@ def write_long_range_summary(
     if "depth" in dataframe.columns:
         depth_metrics = cast(
             pd.DataFrame,
-            dataframe.groupby(
-                "depth"
-            )[metric_columns]
-            .mean(),
+            dataframe.groupby("depth")[metric_columns].mean(),
         )
 
         lines.extend(
@@ -103,7 +91,6 @@ def write_long_range_summary(
         "context_tokens",
         "depth",
     }.issubset(dataframe.columns):
-
         lines.extend(
             [
                 "## Context Length × Depth",

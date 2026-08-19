@@ -5,20 +5,19 @@ import pandas as pd
 
 from probebench.core.result import BenchmarkResult
 
+
 def result_to_dataframe(
-        results: list[BenchmarkResult],
+    results: list[BenchmarkResult],
 ) -> pd.DataFrame:
 
-    rows: list[dict[str, Any]] = [
-        result.to_dict()
-        for result in results
-    ]
+    rows: list[dict[str, Any]] = [result.to_flat_dict() for result in results]
 
     return pd.DataFrame(rows)
 
+
 def write_results_csv(
-        results: list[BenchmarkResult],
-        path: str | Path,
+    results: list[BenchmarkResult],
+    path: str | Path,
 ) -> None:
 
     path = Path(path)

@@ -10,11 +10,6 @@ def create_tokenizer(
 ) -> Tokenizer:
 
     if config.provider == "tiktoken":
-        return TiktokenTokenizer(
-            encoding_name=config.name
-        )
+        return TiktokenTokenizer(encoding_name=config.name)
 
-    raise ValueError(
-        f"Unsupported tokenizer provider: "
-        f"{config.provider}"
-    )
+    raise ValueError(f"Unsupported tokenizer provider: {config.provider}")

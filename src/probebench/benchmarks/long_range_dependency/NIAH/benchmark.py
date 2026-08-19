@@ -1,3 +1,5 @@
+import logging
+
 from probebench.benchmarks.long_range_dependency.NIAH.generator import (
     count_tokens,
     create_haystack,
@@ -8,24 +10,40 @@ from probebench.benchmarks.long_range_dependency.NIAH.generator import (
 from probebench.benchmarks.long_range_dependency.NIAH.schemas import (
     NiahCase,
 )
+from probebench.core.case import BenchmarkCase
+from probebench.core.tokenizer import Tokenizer
+
+logger = logging.getLogger(__name__)
+
 
 class NiahBenchmark:
     """Generate Needle in a haystack cases."""
 
-    name = "needle_in_a_haystack"
+    benchmark_family = "long_range_dependency"
+    experiment_name = "needle_in_a_haystack"
+
+    question = "What is the important secret mentioned in the text?"
+    system_prompt = (
+        "You are a precise extraction engine. "
+        "Answer ONLY with the secret code found in the text. "
+        "Do not add any explanation."
+    )
 
     def __init__(
-            self,
-            filler_path: str,
-            needles_path: str,
-            target_tokens: list[int],
-            depths: list[float],
-            needles_per_configuration: int = 5,
-            context_buffer_tokens: int = 512,
-            max_context_tokens: int = 32728,
+        self,
+        filler_path: str,
+        needles_path: str,
+        tokenizer: Tokenizer,
+        target_tokens: list[int],
+        depths: list[float],
+        needles_per_configuration: int = 5,
+        context_buffer_tokens: int = 512,
+        max_context_tokens: int | None = None,
     ) -> None:
         self.filler_path = filler_path
         self.needles_path = needles_path
+
+        self.tokenizer = tokenizer
 
         self.target_tokens = target_tokens
         self.depths = depths
@@ -36,14 +54,12 @@ class NiahBenchmark:
         self.max_context_tokens = max_context_tokens
 
     def generate_cases(self) -> list[NiahCase]:
-        """Generate all benchmark cases."""
+        """Generate all NIAH benchmark cases."""
 
         filler = load_filler(self.filler_path)
         needles = load_needles(self.needles_path)
 
-        selected_needles = needles[
-            : self.needles_per_configuration
-        ]
+        selected_needles = needles[: self.needles_per_configuration]
 
         cases: list[NiahCase] = []
 
@@ -52,39 +68,40 @@ class NiahBenchmark:
         for target_tokens in self.target_tokens:
             for depth in self.depths:
                 for needle in selected_needles:
-
                     context = create_haystack(
                         filler=filler,
                         needle=needle,
                         target_tokens=target_tokens,
                         depth=depth,
+                        tokenizer=self.tokenizer,
                     )
-                    actual_tokens = count_tokens(context)
-                    if actual_tokens > self.max_context_tokens:
+                    actual_tokens = count_tokens(context, tokenizer=self.tokenizer)
+                    if self._exceeds_context_limit(actual_tokens):
+                        logger.warning(
+                            "Skipping case: target_tokens=%d depth=%.2f "
+                            "actual_tokens=%d exceeds max_context_tokens=%s",
+                            target_tokens,
+                            depth,
+                            actual_tokens,
+                            self.max_context_tokens,
+                        )
                         continue
 
                     expected_answer = extract_expected_answer(needle)
 
-                    # Ensure the model context can actually fit
-                    # the benchmark context plus the question.
-                    num_ctx = min(
-                        self.max_context_tokens,
-                        actual_tokens + self.context_buffer_tokens
+                    num_ctx = self._calculate_num_ctx(actual_tokens)
+
+                    case_id = self._build_case_id(
+                        target_tokens=target_tokens,
+                        depth=depth,
+                        case_number=case_number,
                     )
 
                     cases.append(
                         NiahCase(
-                            case_id=(
-                                f"lrd_"
-                                f"{target_tokens}"
-                                f"{depth:2f}_1"
-                                f"case_mumber:04d"
-                            ),
+                            case_id=case_id,
                             context=context,
-                            question=(
-                                "What is the important secret 1" \
-                                "mentioned in t1ext."
-                            ),
+                            question=self.question,
                             expected_answer=expected_answer,
                             needle=needle,
                             target_tokens=target_tokens,
@@ -105,31 +122,71 @@ class NiahBenchmark:
         Convert benchmark-specific cases into generic ProbeBench cases.
         """
 
-        from probebench.core.case import BenchmarkCase
+        return [self._to_generic_case(case) for case in self.generate_cases()]
 
-        generic_cases = []
+    def _to_generic_case(
+        self,
+        case: NiahCase,
+    ) -> BenchmarkCase:
+        """Convert one NIAH case to a generic case."""
 
-        for case in self.generate_cases():
-            generic_cases.append(
-                BenchmarkCase(
-                    case_id=case.case_id,
-                    benchmark=self.name,
-                    prompt=case.prompt,
-                    expected=case.expected_answer,
-                    metadata={
-                        "needle": case.needle,
-                        "question": case.question,
-                        "target_tokens": case.target_tokens,
-                        "context_tokens": case.actual_tokens,
-                        "depth": case.depth,
-                        "system_prompt": (
-                            "You are a precision extraction engine. "
-                            "Answer ONLY with the secret code found "
-                            "in the text. Do not add any explanation."
-                        ),
-                        "model_options": case.model_options,
-                    },
-                )
-            )
+        prompt = f"{case.context}\n\nQuestion: {case.question}"
 
-        return generic_cases
+        return BenchmarkCase(
+            case_id=case.case_id,
+            benchmark=self.benchmark_family,
+            prompt=prompt,
+            expected=case.expected_answer,
+            metadata={
+                "experiment": self.experiment_name,
+                "needle": case.needle,
+                "question": case.question,
+                "target_tokens": case.target_tokens,
+                "context_tokens": case.actual_tokens,
+                "depth": case.depth,
+                "system_prompt": self.system_prompt,
+                "model_options": case.model_options,
+            },
+        )
+
+    def _exceeds_context_limit(
+        self,
+        actual_tokens: int,
+    ) -> bool:
+        """Return whether a generated case exceeds the limit."""
+
+        if self.max_context_tokens is None:
+            return False
+
+        return actual_tokens > self.max_context_tokens
+
+    def _calculate_num_ctx(
+        self,
+        actual_tokens: int,
+    ) -> int:
+        """Calculate the model context requested for this case.
+
+        The context must accommodate the generated
+        haystack plus a small buffer for the question
+        and model-side prompt formatting.
+        """
+
+        requested_context = actual_tokens + self.context_buffer_tokens
+
+        if self.max_context_tokens is None:
+            return requested_context
+
+        return min(
+            requested_context,
+            self.max_context_tokens,
+        )
+
+    @staticmethod
+    def _build_case_id(
+        target_tokens: int,
+        depth: float,
+        case_number: int,
+    ) -> str:
+        """Build a stable identifier for an NIAH case."""
+
+        return f"niah_{target_tokens}_{depth:.2f}_{case_number:04d}"

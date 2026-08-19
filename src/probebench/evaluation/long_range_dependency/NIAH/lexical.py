@@ -5,20 +5,17 @@ from probebench.core.evaluator import (
     validate_score,
 )
 
+
 class LexicalEvaluator(Evaluator):
     """Checks whether the expected answer occurs in the response.
-    
+
     This remains binary because the benchmark is testing exact
     retrieval of a secret/code.
     """
 
-    name = "lexical_evaluator"
+    name = "lexical"
 
-    def evaluate(
-            self, 
-            case: BenchmarkCase, 
-            predicted: str
-    ) -> EvaluationResult:
+    def evaluate(self, case: BenchmarkCase, predicted: str) -> EvaluationResult:
 
         expected = case.expected.strip().casefold()
         response = predicted.strip().casefold()
