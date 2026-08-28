@@ -1,4 +1,5 @@
 import logging
+import math
 
 from probebench.benchmarks.long_range_dependency.NIAH.generator import (
     count_tokens,
@@ -39,6 +40,7 @@ class NiahBenchmark:
         needles_per_configuration: int = 5,
         context_buffer_tokens: int = 512,
         max_context_tokens: int | None = None,
+        num_ctx_granularity: int = 512,
     ) -> None:
         self.filler_path = filler_path
         self.needles_path = needles_path
@@ -53,6 +55,13 @@ class NiahBenchmark:
         self.context_buffer_tokens = context_buffer_tokens
         self.max_context_tokens = max_context_tokens
 
+        # Ollama keys a llama-server runner on num_ctx, so a one-token
+        # difference between two cases would spawn a second runner and evict
+        # the first. Rounding to a shared bucket keeps them on one.
+        self.num_ctx_granularity = num_ctx_granularity
+
+        self.skipped: list[dict] = []
+
     def generate_cases(self) -> list[NiahCase]:
         """Generate all NIAH benchmark cases."""
 
@@ -64,6 +73,8 @@ class NiahBenchmark:
         cases: list[NiahCase] = []
 
         case_number = 1
+
+        self.skipped = []
 
         for target_tokens in self.target_tokens:
             for depth in self.depths:
@@ -84,6 +95,16 @@ class NiahBenchmark:
                             depth,
                             actual_tokens,
                             self.max_context_tokens,
+                        )
+
+                        self.skipped.append(
+                            {
+                                "target_tokens": target_tokens,
+                                "depth": depth,
+                                "actual_tokens": actual_tokens,
+                                "max_context_tokens": self.max_context_tokens,
+                                "reason": "exceeds_context_limit",
+                            }
                         )
                         continue
 
@@ -172,6 +193,12 @@ class NiahBenchmark:
         """
 
         requested_context = actual_tokens + self.context_buffer_tokens
+
+        # Round up to a shared bucket so every case at a given target size
+        # asks Ollama for the same num_ctx and reuses one loaded runner.
+        if self.num_ctx_granularity > 1:
+            buckets = math.ceil(requested_context / self.num_ctx_granularity)
+            requested_context = buckets * self.num_ctx_granularity
 
         if self.max_context_tokens is None:
             return requested_context
