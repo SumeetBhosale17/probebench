@@ -13,7 +13,7 @@ class LexicalEvaluator(Evaluator):
     retrieval of a secret/code.
     """
 
-    name = "lexical"
+    name = "lexical_exact_match"
 
     def evaluate(self, case: BenchmarkCase, predicted: str) -> EvaluationResult:
 
