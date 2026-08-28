@@ -42,14 +42,23 @@ class EmbeddingSemanticEvaluator(Evaluator):
     def __init__(
         self,
         embedder: Callable[[str], list[float]],
+        batch_embedder: Callable[[list[str]], list[list[float]]] | None = None,
     ) -> None:
         self.embedder = embedder
 
+        # When the provider supports it, expected and predicted go over the
+        # wire together, halving the embed requests per case.
+        self.batch_embedder = batch_embedder
+
     def evaluate(self, case: BenchmarkCase, predicted: str) -> EvaluationResult:
 
-        expected_embedding = self.embedder(case.expected)
-
-        predicted_embedding = self.embedder(predicted)
+        if self.batch_embedder is not None:
+            expected_embedding, predicted_embedding = self.batch_embedder(
+                [case.expected, predicted]
+            )
+        else:
+            expected_embedding = self.embedder(case.expected)
+            predicted_embedding = self.embedder(predicted)
 
         score = cosine_similarity(
             expected_embedding,
