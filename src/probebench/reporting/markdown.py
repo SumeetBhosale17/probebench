@@ -26,7 +26,7 @@ def write_long_range_summary(
     metric_columns = [
         column
         for column in [
-            "lexical",
+            "lexical_exact_match",
             "semantic_similarity",
             "llm_judge",
         ]
@@ -40,6 +40,26 @@ def write_long_range_summary(
 
     if dataframe.empty:
         lines.append("No benchmark results were generated.")
+        path.write_text(
+            "\n".join(lines),
+            encoding="utf-8",
+        )
+        return
+
+    if "status" in dataframe.columns:
+        status_counts = dataframe["status"].value_counts()
+
+        lines.extend(
+            [
+                "## Case Status",
+                "",
+                *(f"- {status}: {count}" for status, count in status_counts.items()),
+                "",
+            ]
+        )
+
+    if not metric_columns:
+        lines.append("No metrics were recorded - every evaluator failed.")
         path.write_text(
             "\n".join(lines),
             encoding="utf-8",
