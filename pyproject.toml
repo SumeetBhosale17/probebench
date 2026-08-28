@@ -5,7 +5,7 @@ description = "A benchmarking toolkit for evaluating large language models using
 readme = "README.md"
 authors = [
     { name = "SumeetBhosale17", email = "sumeetbhosale1947@gmail.com" },
-    { name = "SiddhatKore", email = "siddhskore@gmail.com" },
+    { name = "SiddhantKore", email = "siddhskore@gmail.com" },
     { name = "MukulKumbhar", email = "mukulkumbher2005@gmail.com" }
 ]
 requires-python = ">=3.12"
