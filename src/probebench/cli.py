@@ -822,6 +822,7 @@ def _summarize_output(path: Path) -> None:
 
     for context_tokens in sorted(grouped):
         cells = []
+        case_count = len(grouped[context_tokens])
 
         for metric in present:
             # Absent metrics mean the evaluator failed; averaging over the
@@ -832,7 +833,22 @@ def _summarize_output(path: Path) -> None:
                 if metric in row.get("metrics", {})
             ]
 
-            cells.append(f"{sum(values) / len(values):>20.3f}" if values else f"{'n/a':>20}")
+            if not values:
+                cells.append(f"{'n/a':>20}")
+                continue
+
+            mean = sum(values) / len(values)
+
+            # Disclosing N is the other half of averaging over survivors: a
+            # mean over 2 of 3 cases must not print identically to a mean over
+            # 3 (LIMITATIONS 1.7). Only annotated when they differ, so the
+            # common case stays readable.
+            cell = f"{mean:.3f}"
+
+            if len(values) < case_count:
+                cell = f"{cell} (n={len(values)}/{case_count})"
+
+            cells.append(f"{cell:>20}")
 
         print(f"  {context_tokens:>10,}  " + "  ".join(cells))
 
