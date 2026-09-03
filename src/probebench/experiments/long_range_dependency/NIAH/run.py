@@ -131,9 +131,25 @@ def _run_niah(
         )
 
     if config.judge.enabled:
+        judge_model = config.resolved_judge_model()
+
+        # Self-judging is LIMITATIONS 1.2. J-006 showed it is not a mild bias:
+        # qwen3:0.6b grading its own correct answers returned 0.0 with reasons
+        # that named the expected string in the clause calling it missing.
+        # Warn rather than refuse - a self-judged run is a legitimate thing to
+        # ask for, it is just not a reportable one.
+        if judge_model == config.generation_model:
+            logger.warning(
+                "Judge model %s IS the generation model: this run is "
+                "self-judged and its llm_judge column is not reportable "
+                "(LIMITATIONS 1.2, JOURNAL J-006). Pass --judge-model to "
+                "use an independent judge.",
+                judge_model,
+            )
+
         evaluators.append(
             OllamaJudge(
-                model_name=config.resolved_judge_model(),
+                model_name=judge_model,
                 num_ctx=config.judge.num_ctx,
                 max_predicted_chars=config.judge.max_predicted_chars,
                 keep_alive=config.execution.keep_alive,
