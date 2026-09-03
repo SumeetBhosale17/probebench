@@ -12,8 +12,8 @@ from probebench.core.evaluator import (
 )
 from probebench.core.retry import with_retries
 from probebench.evaluation.long_range_dependency.NIAH.judge.prompt import (
-    JUDGE_SYSTEM_PROMPT,
     build_judge_prompt,
+    build_judge_system_prompt,
 )
 from probebench.models.host import default_ollama_host
 
@@ -43,6 +43,7 @@ class OllamaJudge(Evaluator):
         keep_alive: str = "30m",
         max_retries: int = 3,
         retry_backoff_sec: float = 2.0,
+        check_groundedness: bool = True,
     ) -> None:
         self.model_name = model_name
         self.num_ctx = num_ctx
@@ -50,6 +51,7 @@ class OllamaJudge(Evaluator):
         self.keep_alive = keep_alive
         self.max_retries = max_retries
         self.retry_backoff_sec = retry_backoff_sec
+        self.check_groundedness = check_groundedness
 
         self.host = host or default_ollama_host()
 
@@ -69,12 +71,19 @@ class OllamaJudge(Evaluator):
             "Evaluate the response against the expected answer.",
         )
 
+        # The needle is the only support in the prompt for any claim about the
+        # answer, so it is what groundedness is judged against. A case without
+        # one is scored but not grounded-checked, rather than checked against
+        # nothing (D-010).
+        source = case.metadata.get("needle") if self.check_groundedness else None
+
         prompt = build_judge_prompt(
             question=question,
             expected=case.expected,
             # A model that echoes its haystack would otherwise overflow the
             # pinned num_ctx below and silently truncate the grading rubric.
             predicted=self._truncate(predicted),
+            source=source,
         )
 
         response = with_retries(
@@ -83,7 +92,7 @@ class OllamaJudge(Evaluator):
                 messages=[
                     {
                         "role": "system",
-                        "content": JUDGE_SYSTEM_PROMPT,
+                        "content": build_judge_system_prompt(with_groundedness=source is not None),
                     },
                     {
                         "role": "user",
@@ -131,11 +140,64 @@ class OllamaJudge(Evaluator):
             )
         )
 
+        # An out-of-range score is a judge failure, not a number to repair.
+        # Rescaling 100.0 to 1.0 would be guessing at intent, and it would
+        # hide the prompt regression that produced it (JOURNAL J-006). Raise
+        # instead, and carry the payload in the message: the runner records
+        # only the exception string, so anything not in here is lost, and the
+        # rule tier cannot be replayed offline against evidence that no longer
+        # exists.
+        if not 0.0 <= score <= 1.0:
+            raise JudgeError(
+                f"judge returned a score outside [0.0, 1.0]: {score!r}; "
+                f"reason={reason[:200]!r}; raw={raw_content[:300]!r}"
+            )
+
+        metadata: dict[str, Any] = {
+            "judge_model": self.model_name,
+            "judge_reason": reason,
+        }
+
+        if source is not None:
+            metadata.update(self._grounding_metadata(payload))
+
         return EvaluationResult(
             name=self.name,
             score=validate_score(score),
-            metadata={"judge_model": self.model_name, "judge_reason": reason},
+            metadata=metadata,
         )
+
+    @staticmethod
+    def _grounding_metadata(payload: dict[str, Any]) -> dict[str, Any]:
+        """Extract the groundedness label, or nothing at all.
+
+        Invariant 8 applied to this field: a missing or non-boolean `grounded`
+        leaves the key ABSENT, it does not default to True. Synthesising
+        "grounded" for a case the judge never labelled would put a clean verdict
+        on unlabelled data, which is the one thing the label cannot survive.
+
+        A bad label invalidates only the label - the score has already been
+        validated and still records (D-010).
+        """
+
+        grounded = payload.get("grounded")
+
+        # Deliberately not truthiness: a string "false" or an int 0 means the
+        # judge ignored the contract, and guessing which way it meant is how a
+        # fabricated case becomes a clean one.
+        if not isinstance(grounded, bool):
+            return {}
+
+        metadata: dict[str, Any] = {"grounded": grounded}
+
+        claim = str(payload.get("unsupported_claim", "")).strip()
+
+        # The claim is the evidence that makes the label auditable offline
+        # without re-running the judge, so it is recorded whenever it exists.
+        if claim:
+            metadata["unsupported_claim"] = claim
+
+        return metadata
 
     def _truncate(self, text: str) -> str:
         """Cap the graded response so it cannot overflow the pinned context."""

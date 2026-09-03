@@ -12,10 +12,36 @@ Migration = Callable[
 ]
 
 
+def _migrate_1_0_to_1_1(
+    record: dict[str, Any],
+) -> dict[str, Any]:
+    """1.1 adds the judge's groundedness label (D-010).
+
+    The payload is deliberately left untouched. A 1.0 record was produced by a
+    judge that was never asked about groundedness, so the honest value is
+    ABSENT, not `null` and certainly not `true` - see invariant 8. Only the
+    declared version moves, which is what lets a reader tell "this run predates
+    the label" from "this run's judge failed", using the run's judge
+    provenance rather than the field itself.
+
+    Note the archive contains at least three record shapes all declaring "1.0"
+    (JOURNAL J-005), so a reader must still detect shape by field presence.
+    This migration does not repay that debt; it only stops adding to it.
+    """
+
+    migrated = dict(record)
+
+    migrated["schema_version"] = "1.1"
+
+    return migrated
+
+
 MIGRATIONS: dict[
     tuple[str, str],
     Migration,
-] = {}
+] = {
+    ("1.0", "1.1"): _migrate_1_0_to_1_1,
+}
 
 
 def migrate_record(

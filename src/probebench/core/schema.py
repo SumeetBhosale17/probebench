@@ -1,4 +1,4 @@
-CURRENT_SCHEMA_VERSION = "1.0"
+CURRENT_SCHEMA_VERSION = "1.1"
 
 
 class SchemaVersionError(ValueError):
@@ -7,4 +7,5 @@ class SchemaVersionError(ValueError):
 
 SUPPORTED_SCHEMA_VERSIONS = {
     "1.0",
+    "1.1",
 }

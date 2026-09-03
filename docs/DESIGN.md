@@ -158,6 +158,42 @@ disables thinking, and truncates the graded response.
   its haystack would otherwise overflow 4,096 tokens and silently push the
   grading rubric out of context.
 
+### 3.3a The judge emits a score *and* a label — `evaluation/.../judge/`
+
+**What.** One judge call answers two independent questions: `score`, a float
+in [0.0, 1.0] that flows to `metrics`, and `grounded`, a boolean that flows
+to `evaluation_details.llm_judge` alongside the `unsupported_claim` that
+evidences it. See D-010.
+
+**How.** `build_judge_system_prompt(with_groundedness=...)` composes the
+contract from a scoring section and an optional groundedness section, so the
+scoring half exists once rather than in two copies that drift.
+`build_judge_prompt(..., source=...)` supplies the needle as the SOURCE
+SENTENCE. `OllamaJudge` reads it from `case.metadata["needle"]`; a case
+without one is scored but not grounded-checked, and the source block is
+omitted rather than passed empty.
+
+**Why.**
+- **The needle, not the haystack, is the reference.** It is the only thing
+  in the prompt that licenses a claim about the answer, so a claim absent
+  from it is invented — even when its vocabulary appears in the filler.
+  ("door" occurs 333 times in *War and Peace*; that does not ground
+  "this code unlocks the door".)
+- **A label, not a fourth float.** D-007 rejected compressing a *kind* of
+  failure into a magnitude. `grounded` stays out of `metrics` specifically
+  so it cannot be averaged — a "mean groundedness of 0.97" destroys the
+  information the field exists to carry.
+- **No second model call.** The judge call is already the expensive one on a
+  memory-bound host, and a second per-case call would reintroduce exactly the
+  runner pressure invariant 3 exists to prevent (D-008).
+- **Absent, never defaulted.** A missing or non-boolean `grounded` leaves the
+  key out entirely rather than defaulting to `true` — invariant 8 applied to
+  this field. A bad label invalidates only the label; the score still records.
+
+**Caveat.** The field is unvalidated (LIMITATIONS §1.13): one positive in the
+whole archive, and a judge capacity floor that is known to exist but not
+located.
+
 ### 3.4 `num_ctx` bucketing — `benchmarks/.../benchmark.py`
 
 **What.** `num_ctx` is rounded up to a 512-token boundary.
