@@ -43,7 +43,7 @@ diff teaches nothing. That does not transfer to docs. Documentation is the
 and routing it through a copy-paste round trip is pure friction — which is
 how DESIGN.md and LIMITATIONS.md drift out of date while the code moves.
 
-This applies to all five:
+This applies to all seven:
 
 - **`docs/JOURNAL.md`** — append-only, newest last. Invariant 12: write the
   entry *before* the fix, because the fix destroys the evidence. Never
@@ -64,6 +64,9 @@ This applies to all five:
   from one that was forgotten. See "Resolving a limitation" below.
 - **`docs/DESIGN.md`** — update the what/how/why for any subsystem whose
   architecture you change.
+- **`docs/articles/`** — one file per piece, drafted proactively as findings
+  reach a state worth writing about. See "Writing about it" under Research
+  process for the trigger and the shape.
 - **`CLAUDE.md`** — keep the status table, invariants, and highest-priority
   list in sync with reality when a change moves them.
 
@@ -210,6 +213,12 @@ structured metadata per case over producing a tidier headline number.
 validity as a first-class concern, not a nice-to-have. When a change could
 affect what is being measured — not just how fast it runs — say so explicitly
 and document it.
+
+The paper is the primary deliverable. Blog posts and articles are a
+secondary, derived output — the same JOURNAL/DECISIONS material written for a
+broader audience — and exist to make the work legible while it is still in
+progress, not to replace or race ahead of the paper. See "Writing about it"
+under Research process.
 
 ## Status: built vs. planned
 
@@ -668,6 +677,46 @@ choice is live. An R entry is written *backward* and requires validation.
 When a D entry's change lands and its removal condition is met, the R entry's
 **Decision** section becomes a pointer (`see D-00n`) plus what was learned
 since. Do not maintain two copies of the same argument.
+
+### Writing about it — blogs and articles
+
+Alongside the paper, this project writes for a broader audience as it goes —
+LinkedIn-shaped articles and blog posts, not just an eventual paper's
+methods section. The first was on the KV cache incident: what the crash
+looked like, what caused it, how the KV cache formula above is derived, and
+how the KV cache's size changes with precision — f16 at 2 bytes/element,
+`q8_0` at roughly 1, `q4_0` at roughly 0.5, all against the same
+`kv_bytes_per_token` identity. That is the template: an incident, its
+mechanism, the arithmetic that proves the mechanism, and a generalisable
+lesson — not a results announcement.
+
+**Draft proactively, do not wait to be asked.** When a JOURNAL entry
+graduates to `Disposition: publishable`, when an R-00n lands in RESOLVED.md,
+or when a D-00n's `What we got` is filled in with a real result, that is the
+trigger to draft an article and say so — the same way a limitation or a
+decision gets written up without being asked for. J-002's runner-thrash
+diagnosis, J-009's self-correction of a confounded control, and D-010's
+groundedness label are all shaped like the KV cache piece: a concrete
+failure, a mechanism, evidence that would fail if the explanation were
+wrong.
+
+**Where.** `docs/articles/<slug>.md`, one file per piece, written directly —
+these are ordinary docs writes, not proposals. Draft the whole piece, not an
+outline to be expanded on request.
+
+**What a draft is not.** Publishing. Writing the file is a docs edit;
+posting it anywhere external is a visible, hard-to-reverse action on your
+account, and gets proposed and confirmed like any other — never assume the
+draft is authorised to go out because it was authorised to be written.
+
+**Do not outrun the evidence.** An article is only as reliable as the
+JOURNAL/DECISIONS/LIMITATIONS material it is drawn from at the moment it is
+written. J-003 stands — no retrieval failure has been observed yet — so an
+article claiming to have found model failures would be false regardless of
+how well it reads. Draft what the record actually supports; if a finding is
+still open (a D entry with `What we got: not yet`, a JOURNAL entry with
+`Status: open`), the article says so rather than rounding up to a
+conclusion.
 
 ## The KV cache formula
 
