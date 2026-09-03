@@ -6,6 +6,11 @@ This document records every limitation identified so far, with the reason it
 exists and what would be needed to remove it. Sections 1 and 2 are the ones
 that matter for publishable claims; the rest are engineering debt.
 
+Companion documents: [JOURNAL.md](JOURNAL.md) (what we observed),
+[DECISIONS.md](DECISIONS.md) (what we chose to do about it, and what we chose
+against), [RESOLVED.md](RESOLVED.md) (limitations whose removal condition has
+been met), [DESIGN.md](DESIGN.md) (how the system works now).
+
 Severity key:
 - **BLOCKING** — must be resolved before results are publishable
 - **MAJOR** — must be disclosed in the paper's threats-to-validity section
@@ -46,11 +51,42 @@ context lengths as "cl100k-equivalent" and do not compare across families.
 
 `RunConfig.resolved_judge_model()` falls back to `generation_model` when
 `--judge-model` is not given. The default configuration therefore has a model
-grading its own output — a self-evaluation bias.
+grading its own output.
+
+This is not a mild self-preference bias. Run `0ca55bd787be` (JOURNAL J-006)
+had `qwen3:0.6b` grade three of its own **correct** retrievals and returned
+`0.0` twice, with reasons that named the expected string in the same clause
+that called it missing:
+
+> "The model response incorrectly states that the code is 'ALPHA-9921-X' but
+> does not provide any relevant information about the text's content. The
+> expected answer is missing, and the response is incomplete."
+
+The third case returned `100.0` — the correct grade in the wrong unit — and
+was rejected. The `llm_judge` column in a self-judged run measures the judge.
+
+**Scope correction (JOURNAL J-009).** Those inverted grades turned out to be
+mostly *prompt*-induced, not evidence of a model too small to judge. Holding
+the judge model fixed at `qwen3:0.6b` and repairing only the prompt moves the
+same responses from `0.0` to `0.99`/`1.00`, while a wrong code and a refusal
+still score `0.0`. So this entry does **not** establish a judge-size floor —
+that variable was never isolated. What survives is the structural point: a
+model grading its own output is a self-evaluation bias, and its
+`llm_judge` column is not reportable no matter how well it happens to score.
+
+Consequence for the pivot: a failure corpus graded by a small self-judge has
+corrupted ground truth *before* hand-labelling begins, which would invalidate
+the precision/recall numbers the taxonomy is supposed to be validated
+against.
+
+Mitigation in place: the run logs a WARNING when the judge is the generation
+model. Self-judging is also detectable in any archived record without a
+schema change — `evaluation.judge.model == model.name`.
 
 Fix: always pass an explicit, fixed `--judge-model` for reported results, and
-state it. Ideally use a model from a different family than any system under
-test.
+state it — a model distinct from every system under test, ideally from a
+different family. Whether a *minimum judge size* is additionally required is
+an open question, not a settled one; see J-009.
 
 ### 1.3 No seed control; the judge is not reproducible — MAJOR
 
@@ -74,16 +110,45 @@ and the published heatmap would be pure noise at the cell level.
 
 Fix: `--needles N` with N ≥ 5, plus repeated runs, and report mean ± CI.
 
-### 1.5 `semantic_similarity` has almost no discriminative power — MAJOR
+### 1.5 `semantic_similarity` discriminates on response length, not correctness — MAJOR
 
-Cosine similarity between embeddings of two short extraction answers is
-near-saturated. Observed values across successful runs were `1.0` and
-`0.9999999999999998`; the metric does not separate correct from incorrect on
-this task. Its own docstring already notes it is a similarity metric, not a
-correctness metric.
+Previously recorded here as "almost no discriminative power", on the evidence
+that observed values were `1.0` and `0.9999999999999998`. Runs `0ca55bd787be`
+and `b9fc2be30af6` contradict that: the metric spans 0.649 to 1.0 across four
+responses that are **all fully correct** (JOURNAL J-007).
 
-Fix: either drop it from NIAH reporting or replace it with a metric that
-discriminates (e.g. normalised edit distance on the extracted code).
+| predicted | semantic |
+|---|---|
+| `ALPHA-9921-X` | 1.000 |
+| `The important secret mentioned in the text is ALPHA-9921-X.` | 0.795 |
+| `The important secret ... is the access code, which is ALPHA-9921-X.` | 0.732 |
+| `The important secret ... is the code **ALPHA-9921-X**. This code is tied to unlocking the door ...` | 0.649 |
+
+`lexical_exact_match` is 1.0 for every row. The ordering is by word count.
+
+Mechanism: `EmbeddingSemanticEvaluator` embeds the whole response and
+cosine-compares it against `case.expected`, which is a bare 12-character
+code. Every word of framing moves the response embedding away from it. The
+class docstring already states it is a similarity metric and not a
+correctness metric; the CLI summary table prints it beside
+`lexical_exact_match` and `llm_judge` under a `context` axis, which reads as
+correctness.
+
+This is worse than no discriminative power. NIAH degradation is expected to
+appear as longer, hedgier answers at depth — which this metric renders as a
+falling curve **even if every answer stays correct**. That is a
+publication-shaped result with no content behind it.
+
+Fix: a decision, not a patch, because all three options change metric
+semantics and break comparability with the archive. Either (a) drop it from
+NIAH reporting, (b) redefine it as a maximum over the response's sentences,
+so it asks "does any part of this response mean the expected answer", or
+(c) keep it and rename it to something that cannot be read as correctness.
+Whichever is chosen must be recorded as a metric-semantics change with a
+version marker. **Open — no option selected yet.** The options and their
+consequences are laid out in DECISIONS D-006, which adds a fourth (keep the
+column but stop printing it in the summary table) and notes that no option
+preserves the archived column's comparability.
 
 ### 1.6 Auto-sizing makes runs machine-dependent — MAJOR
 
@@ -136,6 +201,66 @@ should be stated rather than treated as a uniform axis.
 pinned judge context. A pathologically long model answer is graded on its
 first 4,000 characters only. Truncation is marked inline in the judge prompt
 but is not currently recorded in `evaluation_details`.
+
+### 1.12 The judge prompt is an unversioned measured variable — MAJOR
+
+`JUDGE_SYSTEM_PROMPT` is a module-level string. Nothing records which version
+of it graded a given run, and nothing bumps when it changes — yet J-009 shows
+it dominated judge-model size on this task, moving the same judge from `0.0`
+to `1.00` on the same responses.
+
+Consequence: `llm_judge` values are only comparable within a single prompt
+revision, and the record does not say which revision that was. Every
+`llm_judge` value archived before 2026-08-31 was produced by the old
+percentage-detour prompt and is not comparable with anything produced after.
+
+This matters more after build-order step 5, which extends the same prompt
+with a `label` field — classification labels would inherit the same silent
+comparability break.
+
+Fix: hash the judge system prompt and record it in `evaluation.judge`
+(e.g. `prompt_sha256`), so a run states which judge contract produced its
+scores. Deferred to the schema bump in build-order step 1 rather than taken
+as a drive-by `to_record()` change (invariant 7).
+
+**The prompt has now been revised twice on 2026-08-31** — once to remove the
+percentage detour (R-003), once to add the groundedness contract (D-010).
+The second revision moved `llm_judge` as well as adding a field: the
+fabricated-justification response scored 1.00 under the score-only prompt and
+0.95 with the groundedness section present, so the two fields are not as
+independent as the prompt asserts. That is a small effect, but it means
+`llm_judge` is not comparable across *either* revision, and nothing in the
+record distinguishes the three prompt generations.
+
+### 1.13 The `grounded` label is unvalidated, and needs a judge above an unknown floor — MAJOR
+
+`grounded` (D-010) is a single boolean plus an evidence string, produced by
+the judge and recorded in `evaluation_details.llm_judge`. Two things are not
+established.
+
+**Precision and recall are unmeasured.** J-010 ran it over the entire
+archive: 44 records, **1 positive**, zero false positives. But 41 of those 44
+predictions are bare code strings with no claim in them to be ungrounded
+about, so the label is trivially `true` on them and carries no information.
+The archive contains three informative records and one positive. n=1
+establishes that the instrument fires on the case it was designed for; it
+establishes nothing about how often it is right in general.
+
+**There is a judge capacity floor and it is not located.** On a probe set of
+seven responses, `qwen3:4b` scored 7/7 and `qwen3:0.6b` scored 1/7 — the
+small model marked every response ungrounded except a bare code string. A run
+judged below the floor does not merely miss failures, it **manufactures**
+them, reporting `grounded: false` on nearly everything. Nothing currently
+detects this.
+
+Consequence: `grounded` must not be aggregated into a rate, or cited as
+evidence about a model, until a failure corpus exists and per-label precision
+and recall are measured against hand-labelled ground truth.
+
+Fix: build-order step 2 (make failures exist), then hand-label a sample and
+report precision/recall per label. Locating the judge floor needs the same
+corpus. Until then the field is diagnostic evidence for reading case by case,
+not a statistic.
 
 ---
 
@@ -376,9 +501,15 @@ difference between fitting and thrashing.
 ## 7. Priority for a publishable result
 
 1. **1.1** tokenizer mismatch — invalidates the x-axis
-2. **1.4** no repeats — no error bars
-3. **1.3** no seed control — not reproducible
-4. **1.2** self-judging — biased scores
-5. **4.1** two-phase data loss — costs you long runs
-6. **5.2** schema versioning — corrupts the result archive over time
-7. **5.3** untested KV arithmetic — it is a load-bearing claim
+2. **1.5** `semantic_similarity` tracks length — can manufacture a falling
+   context-length curve out of correct answers
+3. **1.4** no repeats — no error bars
+4. **1.3** no seed control — not reproducible
+5. **1.2** self-judging — biased scores
+6. **1.12** unversioned judge prompt — `llm_judge` not comparable across runs
+7. **4.1** two-phase data loss — costs you long runs
+8. **5.2** schema versioning — corrupts the result archive over time
+9. **5.3** untested KV arithmetic — it is a load-bearing claim
+
+1.5 is placed second because it is the only entry here that can produce a
+*plausible-looking* result rather than a missing or noisy one.
