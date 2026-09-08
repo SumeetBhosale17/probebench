@@ -42,10 +42,27 @@ Consequences:
   tokenizes the text less efficiently than cl100k does, silently pushing the
   prompt past the requested `num_ctx`.
 
+**Partially measured since schema 1.2.** Records now carry
+`response.prompt_eval_count` — the model's own token count for the prompt —
+so the error is observable rather than assumed. The first figure (J-015):
+`qwen3:0.6b` reports **4,101** tokens for a nominal 4,000 cl100k haystack,
+a **+2.5%** expansion.
+
+That does not lift the BLOCKING rating. One family is measured, the archive's
+`llama3` runs cannot be (the model is not installed on this host, and
+`prompt_eval_count` was not recorded when they ran), and a 2.5% expansion on
+the `llama3:8b` sweep — 7,000–8,000 nominal against a `num_ctx` of 7,680–8,192
+— would leave only ~200 tokens of headroom, with silent front-truncation
+beyond that.
+
 Fix: tokenize with the target model's own tokenizer (Ollama exposes
 `tokenizer.ggml.model` / `.pre`; the GGUF vocab can be read directly, or
 `/api/embed`-style token counts obtained from the server). Until then, report
 context lengths as "cl100k-equivalent" and do not compare across families.
+
+Sequencing: land content-addressed identity first (D-009) — done in 1.2 — so
+the fix is measurable against a clean cross-model baseline rather than
+destroying it.
 
 ### 1.2 LLM-as-judge defaults to the generation model — MAJOR
 
@@ -110,45 +127,40 @@ and the published heatmap would be pure noise at the cell level.
 
 Fix: `--needles N` with N ≥ 5, plus repeated runs, and report mean ± CI.
 
-### 1.5 `semantic_similarity` discriminates on response length, not correctness — MAJOR
+### 1.5 `semantic_similarity` is an exact detector of response FORM — RESOLVED by removal
 
-Previously recorded here as "almost no discriminative power", on the evidence
-that observed values were `1.0` and `0.9999999999999998`. Runs `0ca55bd787be`
-and `b9fc2be30af6` contradict that: the metric spans 0.649 to 1.0 across four
-responses that are **all fully correct** (JOURNAL J-007).
+Recorded first as "almost no discriminative power", then corrected to
+"discriminates on response length, not correctness". Both readings were
+incomplete, and the third is more useful than either.
 
-| predicted | semantic |
-|---|---|
-| `ALPHA-9921-X` | 1.000 |
-| `The important secret mentioned in the text is ALPHA-9921-X.` | 0.795 |
-| `The important secret ... is the access code, which is ALPHA-9921-X.` | 0.732 |
-| `The important secret ... is the code **ALPHA-9921-X**. This code is tied to unlocking the door ...` | 0.649 |
+J-022 cross-tabulated the metric against a form rule over all 424 archived
+records:
 
-`lexical_exact_match` is 1.0 for every row. The ordering is by word count.
+```
+answer is bare  : n= 64   min 0.9918   mean 0.9995
+answer is prose : n=360   max 0.7977   mean 0.6342
+                          gap +0.1941, ZERO overlap
+```
 
-Mechanism: `EmbeddingSemanticEvaluator` embeds the whole response and
-cosine-compares it against `case.expected`, which is a bare 12-character
-code. Every word of framing moves the response embedding away from it. The
-class docstring already states it is a similarity metric and not a
-correctness metric; the CLI summary table prints it beside
-`lexical_exact_match` and `llm_judge` under a `context` axis, which reads as
-correctness.
+It holds *within* `qwen3:0.6b`, the only model with both classes, so it is not
+a model artefact. This is not noisy length-sensitivity — it is a **step
+function**: a near-perfect binary detector of whether the response is the bare
+answer or a sentence. Embedding a whole response against a bare 12-character
+code gives ~1.0 when the response *is* that code and ~0.6–0.8 when it is prose.
 
-This is worse than no discriminative power. NIAH degradation is expected to
-appear as longer, hedgier answers at depth — which this metric renders as a
-falling curve **even if every answer stays correct**. That is a
-publication-shaped result with no content behind it.
+So the metric was measuring something real and sharp, under a name that reads
+as correctness. §1.5's earlier text called it broken; it was mislabelled.
 
-Fix: a decision, not a patch, because all three options change metric
-semantics and break comparability with the archive. Either (a) drop it from
-NIAH reporting, (b) redefine it as a maximum over the response's sentences,
-so it asks "does any part of this response mean the expected answer", or
-(c) keep it and rename it to something that cannot be read as correctness.
-Whichever is chosen must be recorded as a metric-semantics change with a
-version marker. **Open — no option selected yet.** The options and their
-consequences are laid out in DECISIONS D-006, which adds a fourth (keep the
-column but stop printing it in the summary table) and notes that no option
-preserves the archived column's comparability.
+**Removed from NIAH (D-019), not deprecated.** `instruction_compliance`
+(D-018) measures the same property exactly, deterministically, offline, at
+zero cost, with a recorded rule version and a four-way verdict instead of a
+float needing a threshold. The `EmbeddingSemanticEvaluator` class is retained
+for future families whose expected answers are prose, where cosine against the
+expected text is a genuinely different measurement.
+
+Residual: archived `semantic_similarity` values remain in 424 records and are
+now *more* interpretable than before — read them as a form detector, not a
+correctness score. A report must not present them as correctness.
 
 ### 1.6 Auto-sizing makes runs machine-dependent — MAJOR
 
@@ -182,18 +194,86 @@ The extra context is empty, so the needle's *relative* depth is unchanged,
 but the model is not run at a tight context limit. Disclose the bucketing
 rule if context-limit saturation is ever a claim.
 
-### 1.9 Fixed filler corpus and needle set — MINOR
+### 1.9 The filler corpus is a semantic distractor, and needle wording is a first-order variable — MAJOR
 
-All haystacks come from one 3.3 MB `filler_text.txt` and one `needles.txt`.
-Domain, register, and repetition effects are unmeasured and confounded with
-the length effect.
+Previously rated MINOR on the theory that domain and register effects were
+merely "unmeasured". Run `2bfcd3f32b11` measures them, and they are the
+largest effects in the file (JOURNAL J-011).
 
-### 1.10 Depth 1.0 places the needle adjacent to the question — MINOR
+**The filler is not neutral.** `filler_text.txt` is *War and Peace*, which
+opens with court intrigue about a secret appointment pushed through the
+Dowager Empress. Asked "what is the important secret mentioned in the text?",
+the model answers *that* instead of the needle:
 
-The prompt is `f"{context}\n\nQuestion: {question}"`. At `depth=1.0` the
-needle sits immediately before the question, which is a qualitatively
-different retrieval task from `depth=0.0`. This is inherent to NIAH but
-should be stated rather than treated as a uniform axis.
+> "The important secret mentioned in the text is the appointment of Baron
+> Funke as the first secretary at Vienna, which is being sought by others
+> through the Dowager Empress Márya Fëdorovna."
+
+34 of 330 cases. 32 of the 34 fall at depths 0.0–0.2 — where the needle
+precedes the intrigue — and the mode vanishes entirely from depth 0.3 on.
+`qwen3:0.6b` shows the same mode at 36k–40k in run `85d237650c49`.
+
+**Consequence for the taxonomy.** CLAUDE.md marks
+`niah.distractor_retrieval` "unreachable **by construction** — one needle per
+haystack". That is wrong: the distractor is in the *filler*, and the label is
+reachable today without the distractor-injection work in build-order step 2.
+
+**Needle wording spans 19 points of accuracy**, more than context length does
+anywhere in that run:
+
+| needle | correct / 55 |
+|---|---|
+| `The magic word to unlock the door is CRIMSON-EAGLE-44.` | 48 |
+| `The hidden password for the vault is OMEGA-7732-Q.` | 48 |
+| `The confidential identifier is DELTA-1102-M.` | 47 |
+| `The secret access code is ALPHA-9921-X.` | 44 |
+| `Remember that the special key is 8829-BETA-Z.` | 42 |
+| `The secret ingredient is QUANTUM-LEAP-99.` | **29** |
+
+`secret ingredient` is both least congruent with a Tolstoy novel and least
+matched to the question's wording, and it draws 18 of the 33 outright
+denials.
+
+Fix: report per-needle results rather than pooling them; treat needle
+identity as a factor, not a repeat. A filler corpus that does not itself
+answer the question would isolate retrieval from distraction — but note that
+the current corpus produces a *more* interesting benchmark, so the honest
+move is to measure both rather than to sanitise it away.
+
+### 1.10 At depth 1.0 the model rejects the needle as an artifact — MAJOR
+
+The prompt is `f"{context}\n\nQuestion: {question}"`, so at `depth=1.0` the
+needle sits immediately before the question. This was previously rated MINOR
+on the theory that adjacency makes the task **too easy**.
+
+The sign is wrong. Depth 1.0 is the second-worst cell in `2bfcd3f32b11`
+(accuracy 0.33 against 0.97 at depth 0.5), and the responses show why — the
+model finds the needle and disputes it (JOURNAL J-012):
+
+> "There is no important secret mentioned in the text. The mention of
+> [IMPORTANT SECRET] is likely an error or a joke."
+
+> "...The code "DELTA-1102-M" is likely a fictional or humorous identifier
+> added by the extraction engine, and not a real secret or code mentioned in
+> the text."
+
+> "...The secret code "CRIMSON-EAGLE-44" is not a real secret, but rather a
+> placeholder **I inserted** as per your instruction..."
+
+20 of the 30 depth-1.0 cases are this. In that position the model reads
+`[IMPORTANT SECRET]: …` as prompt scaffolding rather than document content,
+notices it is incongruous with Tolstoy, and concludes it is a mistake — one
+response attributing the insertion to itself.
+
+Consequence: the depth axis is not uniform, and its last point measures
+something else — the insertion *format*, not retrieval distance. Any
+depth curve must either exclude depth 1.0 or state that its endpoint is
+confounded with the prompt boundary.
+
+Fix: place the needle at depth 1.0 followed by a paragraph of filler, so
+adjacency to the question boundary is separated from depth. That experiment
+also settles whether the rejection is caused by position or by the
+`[IMPORTANT SECRET]:` marker itself, which is currently untested.
 
 ### 1.11 Judge input is truncated at 4,000 characters — MINOR
 
@@ -261,6 +341,134 @@ Fix: build-order step 2 (make failures exist), then hand-label a sample and
 report precision/recall per label. Locating the judge floor needs the same
 corpus. Until then the field is diagnostic evidence for reading case by case,
 not a statistic.
+### 1.14 `lexical_exact_match` was containment, and over-reported by 5 points — CORRECTED
+
+Until 2026-09-03 the metric was `expected in response`, so a model that
+quoted the code **while denying it was real** scored 1.0 (JOURNAL J-013):
+
+> `lexical_exact_match = 1.0` — "There is no important secret mentioned in
+> the text. The code "DELTA-1102-M" is likely a fictional or humorous
+> identifier added by the extraction engine, and not a real secret."
+
+15 of 330 records in `2bfcd3f32b11`; reported accuracy 0.788 against a true
+0.742, with 9 of the 15 at depth 1.0, where the cell was inflated from 0.33
+to 0.63. The bug was unreachable until a model started arguing with the
+prompt (§1.10), which is why every earlier run agreed with the truth.
+
+**Fixed** (D-011): containment plus a narrow repudiation guard, which only
+ever removes credit. Validated by replay over all 12 archived files — 15
+records flip 1.0 → 0.0, **zero** flip 0.0 → 1.0, and no other file changes.
+
+Residual, and the reason this stays here rather than moving to RESOLVED.md:
+
+- The guard is a **hand-written English regex** built from observed responses
+  in one run. It has no measured precision against held-out data, and it will
+  need per-language work the moment a non-English family exists.
+- It draws a boundary that is genuinely fuzzy. A response that asserts the
+  answer *and* editorialises ("the secret is QUANTUM-LEAP-99, which is not a
+  real ingredient") scores 1.0; one that denies the answer first scores 0.0.
+  That is the intended line (J-014) but it is a judgement encoded in a regex.
+- **Archived `lexical_exact_match` values are not comparable across the
+  change.** Any figure mixing pre- and post-2026-09-03 runs is invalid.
+- Every accuracy number for `llama3:8b` published before this date is
+  overstated.
+
+
+### 1.15 `needle_index` in `case_key` is positional identity — WITHDRAWN
+
+Recorded when D-012 chose `n{needle_index}` for `case_key`'s needle segment,
+on the reasoning that a line number in `needles.txt` is readable and the file
+is append-only in practice.
+
+**Withdrawn before it ever shipped.** D-015 replaced the index with a digest
+of the needle text (`n{sha256(needle)[:8]}`), which is content-addressed, so
+reordering or inserting a needle cannot rename a key. The defect this entry
+described does not exist in the implemented design.
+
+The trigger for the change was not this entry's argument. It was that a
+migration must be a pure function of the record: archived records store the
+needle *text* and not its index, so deriving an index would have required
+reading `needles.txt` inside `migrate_record`. See D-015.
+
+`needles_sha256` is still recorded per run — it detects a needle's text being
+edited *in place*, which a per-needle digest cannot.
+
+### 1.16 The `host` block describes the client, and only at run start — MINOR
+
+The `host` block (D-013) is honest but narrow, in four ways.
+
+**It is the client machine.** When `OLLAMA_HOST` points elsewhere,
+`host.machine` is `null` with `machine_source: "remote"` — correct, but it
+means a remote run has no hardware provenance at all. Ollama's API does not
+expose server hardware.
+
+**It is a run-start snapshot.** `host.snapshot` (available RAM, free VRAM) is
+taken once. Contention *during* a run — another process taking memory, or the
+judge competing with generation — is unmeasured, and that is the most likely
+explanation for per-case latency variance (1.5–28.7 s within one `llama3:8b`
+sweep).
+
+**GPU fields inherit §2.3 and §2.4** — NVIDIA-only, Linux-only. A null GPU
+field means "not detected", which on a Mac or an AMD host is
+indistinguishable from "no GPU". `host.platform` is recorded so the two can
+at least be told apart by hand.
+
+**The twelve archived files cannot get one.** The machine that produced them
+is not recoverable from the records, so the migration leaves `host` absent
+rather than inventing it. Those runs are permanently un-groupable by hardware,
+which specifically means the `llama3:8b` and `llama3.2:1b` latency figures
+(J-011) can never be attributed to a machine.
+
+Removal condition: for the first three, a hardware probe that runs
+*server-side* — which for Ollama means either an API that does not exist yet
+or a ProbeBench agent on the inference host. For the fourth, nothing; it is
+permanent.
+
+### 1.17 The cross-model compliance contrast is not context-matched — MAJOR
+
+J-021 reported instruction compliance as 100% for `qwen3:4b` and 0% for
+`llama3:8b` and read it as a model effect. J-022 shows the comparison is
+confounded.
+
+```
+  qwen3:4b      4,000   34/34  = 100%      <- 34 of its 37 records
+  qwen3:4b     32,000    3/3   = 100%
+  qwen3:0.6b    4,000   14/14  = 100%
+  qwen3:0.6b   32,000   12/27  =  44%
+  qwen3:0.6b   36,000    1/5   =  20%
+  qwen3:0.6b   40,000    0/5   =   0%
+  llama3:8b   7,000-8,000  0/330 = 0%      <- no context overlap with qwen3
+```
+
+Two problems. `llama3:8b` shares **no context length** with any qwen3 run, so
+family and context length are perfectly confounded for that contrast. And the
+within-model spread on `qwen3:0.6b` is *itself* total — 100% to 0% — so
+"models differ" and "context lengths differ" explain the data equally well.
+
+The one genuinely matched cell is 32k, where `qwen3:4b` is 3/3 and
+`qwen3:0.6b` is 12/27. That is a real model effect at **n=3**.
+
+A second confound sits underneath (J-017): qwen3 emits reasoning into a
+separate `thinking` channel that never reaches `predicted`, while llama3 has
+no such channel. So the compliance rule measures the *final* channel on one
+family and the *whole output* on the other.
+
+**Partly cleared (J-023).** Disabling thinking on `qwen3:0.6b` leaves the
+response bare — compliance survives removal of the channel, so the framing was
+never being hidden there. The remaining asymmetry is real but is not an
+instrument artefact: qwen3 answers after a reasoning pass and llama3 does not,
+and if reasoning improves instruction-following that is a capability
+difference worth surfacing rather than controlling away. Two residual gaps:
+the probe ran at 4k, where compliance is 100% anyway rather than in the 44%
+regime at 32k; and it is untestable on `qwen3:4b`, where `think=False` leaks
+the chain of thought into the response instead of disabling it. Any
+cross-family claim must state the thinking configuration, which schema 1.3
+records.
+
+Fix: a context-matched run — the same target tokens on both families — and a
+check of whether `thinking_chars` correlates with compliance. Until both, no
+cross-family compliance claim is supportable.
+
 
 ---
 
@@ -323,11 +531,59 @@ from `embedding_length // head_count` when `key_length` is absent, which is
 wrong for architectures where those differ (e.g. some MLA/DeepSeek variants).
 When geometry is unavailable the preflight silently no-ops.
 
-### 2.6 `q4_0` KV cache cannot be expressed — MINOR
+### 2.6 `q4_0` KV cache cannot be expressed, and is now newly reachable — MINOR
 
 `--kv-cache-type` accepts only `f16` and `q8_0`, because
 `kv_cache_bytes_per_element` is an `int`. `q4_0` (~0.5 bytes/element) cannot
 be represented.
+
+This was theoretical until the KV probe landed (D-017). The probe measures the
+server's actual precision, and a daemon running `q4_0` would report ~0.5
+bytes/element — which `classify()` recognises but the configuration has nowhere
+to store. The run would then refuse on a request/measurement mismatch, which is
+the right outcome for a slightly wrong reason: the real problem is that the
+config cannot express what was measured.
+
+Fix: make the field a `float`, or better, carry the KV *type* string as the
+primary and derive bytes from it. The type is what the server accepts; the byte
+count is a derived quantity only the estimator needs.
+
+### 2.7 The KV precision probe is coarse, and cannot see a daemon's config — MINOR
+
+The probe (D-017, J-018) measures bytes-per-element by differencing the `size`
+that `/api/ps` reports for one model loaded at two context sizes. It is the
+only method that works against a service-managed or remote daemon, but it has
+three limits.
+
+**It reads bimodally, not noisily, and the two modes are ~16% apart.**
+Repeated probes of one unchanged server return two discrete values that each
+repeat exactly — 1.932 / 2.080 on f16, 1.0315 / 1.1935 on q8_0 (J-026) — most
+plausibly with how much of the model is resident in VRAM at the moment of the
+load. Both modes bracket the true constant.
+
+The constants themselves are ggml's **block-quantised** sizes, not nominal bit
+widths: a q8_0 block is 32 values plus a 2-byte fp16 scale, so 34/32 = 1.0625,
+and q4_0 is 18/32 = 0.5625. Using 1.0 for q8_0 put the acceptance band
+off-centre and rejected as "unrecognised" the first real q8_0 measurement this
+project took.
+
+Ample for separating f16 from q8_0 from q4_0, whose bands are ~2× apart and
+provably non-overlapping; useless for anything finer. **A single reading must
+never be quoted as a precise figure.** The raw evidence is recorded per run so
+the classification can be re-derived offline.
+
+**It costs two model loads.** Skipped under `--dry-run`, disableable via
+`ExecutionConfig.probe_kv_cache`. It runs before generation, so it cannot evict
+the sweep's runner mid-run, but a run starts ~15 s later.
+
+**It measures behaviour, not configuration.** It can say the server is running
+f16; it cannot say why, nor what `OLLAMA_KV_CACHE_TYPE` is set to, nor whether
+flash attention is on. On the default install the daemon runs as user `ollama`
+under systemd and its environment is unreadable (J-018), so no local inspection
+recovers that.
+
+Removal condition: Ollama exposing its effective KV cache type through the API,
+at which point the probe becomes a cross-check rather than the only source.
 
 ---
 
@@ -416,6 +672,34 @@ under memory pressure, or two competing stores). Retries and the startup
 preflight mitigate it, but the underlying cause was never confirmed on that
 host — the diagnostics in the test guide were not run there.
 
+### 4.7 Skipped cases are logged, not recorded — MAJOR
+
+A case whose haystack exceeds the `--context` ceiling is dropped before
+generation, so it never becomes a result and never reaches the JSONL.
+`NiahBenchmark.skipped` collects the reasons, `run.py` prints them as a
+WARNING, and then they are discarded.
+
+Consequence: **invariant 4 ("skipped cases must always be reported, never
+silently dropped") is currently upheld only by a gitignored log file.** Six
+archived runs skipped every one of their cases and therefore produced no
+`.jsonl` at all — their entire existence is one WARNING line in
+`results/raw/*.log`, which is untracked and which nothing reads (JOURNAL
+J-019).
+
+Any statement of the form "this sweep covered N cells" is therefore
+unverifiable from the archive. A cell that was never attempted and a cell
+that was attempted and dropped look identical: both are absent.
+
+Fix: write a run-level sidecar next to the JSONL — the natural companion to
+the resolved-config sidecar — carrying each skipped cell, its `case_key`
+where derivable, and the reason. Skips cannot live in a per-record block
+because they describe *absent* records, which is precisely why they fell
+through the schema work.
+
+Removal condition: a sweep's full intended grid is reconstructable from
+stored artefacts alone, with each cell marked attempted, skipped-with-reason,
+or failed.
+
 ---
 
 ## 5. Architectural gaps
@@ -500,16 +784,28 @@ difference between fitting and thrashing.
 
 ## 7. Priority for a publishable result
 
-1. **1.1** tokenizer mismatch — invalidates the x-axis
-2. **1.5** `semantic_similarity` tracks length — can manufacture a falling
+1. **1.9 / 1.10** the filler is a distractor and depth 1.0 is a rejection
+   artifact — together these are most of the observed failure signal, and
+   both were rated MINOR until the data arrived
+2. **1.1** tokenizer mismatch — invalidates the x-axis
+3. **1.5** `semantic_similarity` tracks length — can manufacture a falling
    context-length curve out of correct answers
-3. **1.4** no repeats — no error bars
-4. **1.3** no seed control — not reproducible
-5. **1.2** self-judging — biased scores
-6. **1.12** unversioned judge prompt — `llm_judge` not comparable across runs
-7. **4.1** two-phase data loss — costs you long runs
-8. **5.2** schema versioning — corrupts the result archive over time
-9. **5.3** untested KV arithmetic — it is a load-bearing claim
+4. **1.4** no repeats — no error bars
+5. **1.3** no seed control — not reproducible
+6. **1.2** self-judging — biased scores
+7. **1.12** unversioned judge prompt — `llm_judge` not comparable across runs
+8. **1.13** `grounded` unvalidated — do not aggregate it into a rate
+9. **4.1** two-phase data loss — costs you long runs
+10. **5.2** schema versioning — corrupts the result archive over time
+11. **5.3** untested KV arithmetic — it is a load-bearing claim
 
-1.5 is placed second because it is the only entry here that can produce a
-*plausible-looking* result rather than a missing or noisy one.
+1.9/1.10 lead because they are not threats to a future claim — they are
+already the explanation for most of the failures in the only run that has
+any, so nothing about `llama3:8b`'s depth curve can be reported without
+them. 1.5 stays high for the opposite reason: it is the entry most likely to
+produce a *plausible-looking* result rather than a missing or noisy one.
+
+The two entries that changed severity here (1.9 MINOR → MAJOR, 1.10 MINOR →
+MAJOR) are worth noting as a pattern: both were rated low because their
+effect was **unmeasured**, and both turned out to dominate once measured.
+"Unmeasured" is not evidence of "small".

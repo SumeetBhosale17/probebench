@@ -66,7 +66,11 @@ This applies to all seven:
   architecture you change.
 - **`docs/articles/`** — one file per piece, drafted proactively as findings
   reach a state worth writing about. See "Writing about it" under Research
-  process for the trigger and the shape.
+  process for the trigger and the shape. `docs/articles/README.md` carries the
+  written/queued index and the four-beat template.
+- **`docs/CODEMAP.md`** — what every file does and why. Update it when a file
+  is added, removed, or changes purpose; a codemap that lists a file which no
+  longer exists is worse than none.
 - **`CLAUDE.md`** — keep the status table, invariants, and highest-priority
   list in sync with reality when a change moves them.
 
@@ -234,7 +238,11 @@ ProbeBench result file.
 | Failure isolation, retries, health checks | **built** | `core/{runner,retry,health}.py` |
 | Two-phase execution, judge context pinning | **built** | `core/runner.py`, `evaluation/.../judge/` |
 | Structured provenance per case | **built** | `core/result.py` |
-| Schema migration path | **built, minimal** | `core/migrations.py` — one migration (1.0→1.1); J-005's three-shapes debt unpaid |
+| Schema migration path | **built** | `core/migrations.py` — 1.0→1.1→1.2→1.3, tested over the whole archive; J-005's three-shapes debt unpaid |
+| Case identity (`case_key`, `case_fingerprint`) | **built** | `core/case_identity.py`, `benchmarks/.../NIAH/identity.py` (D-012, D-015) |
+| Hardware provenance per run | **built** | `core/hostinfo.py` (D-013); null when Ollama is remote |
+| KV precision measured, not assumed | **built** | `core/kvprobe.py` (D-017); a mismatched run refuses to start |
+| Layered config (`probebench.toml`) | **built** | `core/settings.py` (D-016); measured/operational split is a type error |
 | `grounded` label on the judge | **built, unvalidated** | `evaluation/.../judge/` (D-010); LIMITATIONS §1.13 |
 | **Error taxonomy** (labels, not scores) | **planned** | `core/taxonomy.py` |
 | **Failure classification** (rules + LLM tier) | **planned** | `core/classification.py`, `classification/` |
@@ -295,6 +303,10 @@ family-specific subtypes under `classification/<family>/<EXPERIMENT>/`.
   fixed, with the methodology, the rejected alternatives, and why each fix is
   correct rather than merely effective. Read before re-proposing an approach
   that was already considered and rejected.
+- **[docs/CODEMAP.md](docs/CODEMAP.md)** — what every file does, how, and why
+  it exists. The "why" column is the point: a file's relevance is usually a
+  limitation it closes or an invariant it enforces, which is invisible from
+  the code. Read first when you do not know where something lives.
 
 When you discover a new limitation, add it to LIMITATIONS.md with its
 severity and what would be needed to remove it. When you resolve one, move it
@@ -520,10 +532,19 @@ those files join on `case_key` only.
 
 ## Before the taxonomy can be validated
 
-**Every metric in every successful run so far has been 1.0** — the sub-1.0
-values that exist are evaluator artefacts (J-006, J-007), not model failures.
-The benchmark has no discriminating power: there are **zero observed
-retrieval failures** in the archive.
+**Corrected 2026-09-07 (J-022).** This section used to say the benchmark had
+no discriminating power. That is false, and what falsifies it was in the
+archive the whole time.
+
+**Retrieval** is still near-saturated on qwen3 runs, and J-003 stands: no
+genuine retrieval failure has been isolated from an instrument artefact.
+
+**Instruction-following is not.** `instruction_compliance` (D-018) fires on
+360 of 424 archived responses, and on `qwen3:0.6b` it produces the project's
+first graded degradation curve: **100% → 44% → 20% → 0%** across
+4k → 32k → 36k → 40k. It also separates models — `qwen3:4b` obeys 37/37,
+`llama3:8b` obeys 0/330 — though that contrast is not context-matched and is
+`Validated: not yet` (§1.17).
 
 The one non-scalar exception proves the point rather than weakening it. The
 `grounded` label (D-010) fired on exactly **1 of 44** archived records
@@ -766,7 +787,7 @@ uv run probebench <model>                    # run all experiments
 uv run probebench doctor [model]             # environment check
 uv run probebench plan <model>               # what contexts fit this machine
 uv run probebench <model> --dry-run          # cases + memory plan, no calls
-uv run probebench models inspect <model>     # incl. KV cache per token
+uv run probebench models inspect <model>     # geometry, GQA ratio, KV cache ladder
 ```
 
 Always available: `--target-tokens`, `--profile {auto,quick,standard,full}`,
