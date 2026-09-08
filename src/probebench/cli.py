@@ -3,6 +3,7 @@ import json
 import logging
 import sys
 from pathlib import Path
+from typing import Any
 
 from probebench.core.config import (
     EmbeddingConfig,
@@ -19,6 +20,7 @@ from probebench.core.preflight import (
     max_feasible_num_ctx,
     recommend_target_tokens,
 )
+from probebench.core.settings import ConfigError, ResolvedSettings, load_settings
 from probebench.experiments.registry import (
     ExperimentSpec,
     all_experiments,
@@ -49,7 +51,13 @@ PROFILES: dict[str, list[int]] = {
 }
 
 METRIC_COLUMNS = (
+    # The two axes NIAH scores since D-018: did it retrieve, and did it obey.
+    # Printed side by side because reporting either alone hides half the task -
+    # llama3:8b retrieves 74% and complies 0%, and a single number would be
+    # dominated by whichever is lower without saying which.
     "lexical_exact_match",
+    "instruction_compliance",
+    # Retained so archived runs still render; dropped from NIAH in D-019.
     "semantic_similarity",
     "llm_judge",
 )
@@ -88,7 +96,7 @@ def _add_shared_run_options(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--profile",
         choices=["auto", *PROFILES],
-        default="auto",
+        default=None,
         help=(
             "Context sweep preset. 'auto' sizes the sweep to this machine's "
             "free RAM and VRAM. Ignored when --target-tokens is given."
@@ -105,26 +113,26 @@ def _add_shared_run_options(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--depths",
         type=_float_list,
-        default=[0.0, 0.25, 0.5, 0.75, 1.0],
+        default=None,
         help="Comma-separated needle depths in [0,1].",
     )
 
     parser.add_argument(
         "--needles",
         type=int,
-        default=1,
+        default=None,
         help="Needles per (length, depth) configuration.",
     )
 
     parser.add_argument(
         "--tokenizer",
-        default="cl100k_base",
+        default=None,
         help="Tokenizer encoding.",
     )
 
     parser.add_argument(
         "--embedding-model",
-        default="nomic-embed-text",
+        default=None,
         help="Embedding model.",
     )
 
@@ -137,14 +145,14 @@ def _add_shared_run_options(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--judge-context",
         type=int,
-        default=4096,
+        default=None,
         help="Pinned judge context. Keeping this fixed avoids per-case model reloads.",
     )
 
     parser.add_argument(
         "--kv-cache-type",
         choices=["f16", "q8_0"],
-        default="f16",
+        default=None,
         help=(
             "KV cache precision assumed when estimating memory. Set OLLAMA_KV_CACHE_TYPE to match."
         ),
@@ -192,8 +200,33 @@ def _add_shared_run_options(parser: argparse.ArgumentParser) -> None:
 
     parser.add_argument(
         "--output-dir",
-        default="results",
+        default=None,
         help="Directory for raw results.",
+    )
+
+    parser.add_argument(
+        "--config",
+        default=None,
+        help=(
+            "Path to a probebench.toml. Defaults to the nearest one at or above "
+            "the working directory, or $PROBEBENCH_CONFIG."
+        ),
+    )
+
+    parser.add_argument(
+        "--machine",
+        default=None,
+        help=(
+            "Name of a [machine.*] section. Machine sections may only carry "
+            "execution settings, never anything that changes what is measured. "
+            "Defaults to $PROBEBENCH_MACHINE."
+        ),
+    )
+
+    parser.add_argument(
+        "--experiment-profile",
+        default=None,
+        help="Name of an [experiment.*] section, layered over [defaults].",
     )
 
 
@@ -449,16 +482,60 @@ def inspect_model(
 
     print(f"Tokenizer pre:      {info.tokenizer_pre or 'unknown'}")
 
-    print(f"Layers:             {info.block_count or 'unknown'}")
+    if info.size_bytes:
+        print(f"Weights on disk:    {info.size_bytes / 1024**3:.2f} GiB")
 
-    print(f"KV heads:           {info.kv_head_count or 'unknown'}")
+    print()
+    print("Geometry (the inputs to the KV cache formula)")
+    print(f"  Layers:           {info.block_count or 'unknown'}")
+    print(f"  Attention heads:  {info.head_count or 'unknown'}")
+    print(f"  KV heads:         {info.kv_head_count or 'unknown'}")
 
-    print(f"Head dim:           {info.head_dim or 'unknown'}")
+    if info.head_count and info.kv_head_count:
+        # A GQA ratio above 1 is why KV cache is far smaller than a naive
+        # n_heads-based estimate would suggest.
+        print(f"  GQA ratio:        {info.head_count / info.kv_head_count:.0f}:1")
+
+    print(f"  Head dim:         {info.head_dim or 'unknown'}")
+    print(f"  Embedding length: {info.embedding_length or 'unknown'}")
 
     per_token = info.kv_bytes_per_token()
 
-    if per_token:
-        print(f"KV cache per token: {per_token / 1024:.0f} KiB")
+    if not per_token:
+        print()
+        print("KV cache per token: unknown (GGUF metadata is missing geometry)")
+        return
+
+    print()
+    print("KV cache per token  (2 x layers x kv_heads x head_dim x bytes_per_element)")
+    print(
+        f"  f16:  2 x {info.block_count} x {info.kv_head_count} x {info.head_dim} x 2"
+        f" = {per_token:,} B/token = {per_token / 1024:.0f} KiB/token"
+    )
+
+    per_token_q8 = info.kv_bytes_per_token(bytes_per_element=1)
+
+    if per_token_q8:
+        print(f"  q8_0: half that            = {per_token_q8 / 1024:.0f} KiB/token")
+
+    print()
+    print(f"  {'context':>10}  {'KV @ f16':>12}  {'KV @ q8_0':>12}")
+
+    ladder = [4_000, 8_000, 16_000, 32_000, 64_000, 128_000]
+
+    if info.context_length:
+        ladder.append(info.context_length)
+
+    for size in sorted(set(size for size in ladder if size <= (info.context_length or 0))):
+        f16 = per_token * size
+        q8 = (per_token_q8 or 0) * size
+
+        marker = "  <- advertised max" if size == info.context_length else ""
+
+        print(f"  {size:>10,}  {f16 / 1024**3:>10.1f} G  {q8 / 1024**3:>10.1f} G{marker}")
+
+    print()
+    print("Run `probebench plan <model>` for what THIS machine can actually hold.")
 
 
 def pull_model_command(model_name: str, assume_yes: bool) -> None:
@@ -657,24 +734,55 @@ def plan_command(args: argparse.Namespace) -> None:
 # =====================================================
 
 
+def _pick(*candidates: Any) -> Any:
+    """First non-None candidate, in precedence order.
+
+    None is the only "not set" marker in the whole layering, which is why the
+    CLI defaults had to become None: argparse cannot otherwise distinguish "the
+    user asked for the default" from "the user did not ask", so CLI would
+    silently win over the file on every single run (D-016).
+    """
+
+    for candidate in candidates:
+        if candidate is not None:
+            return candidate
+
+    return None
+
+
 def _resolve_target_tokens(
     args: argparse.Namespace,
+    settings: ResolvedSettings,
     model_name: str,
     kv_cache_type: str,
 ) -> list[int]:
-    """Decide the context sweep: explicit list, named profile, or auto-sized."""
+    """Decide the context sweep: CLI list, file list, named profile, or auto."""
 
     if args.target_tokens:
         return args.target_tokens
 
-    if args.profile != "auto":
-        return PROFILES[args.profile]
+    if settings.experiment.target_tokens:
+        return settings.experiment.target_tokens
+
+    profile = args.profile or "auto"
+
+    if profile != "auto":
+        return PROFILES[profile]
+
+    if settings.fleet.forbid_auto_profile:
+        # LIMITATIONS 1.6: auto sizes the sweep from THIS host's free RAM, so
+        # two machines running the same command produce different sweeps. A
+        # fleet that intends to pool results cannot allow that silently.
+        raise SystemExit(
+            "This config sets fleet.forbid_auto_profile. Pass --target-tokens "
+            "or --profile explicitly, or set target_tokens in the config file."
+        )
 
     registry = OllamaModelRegistry()
 
     try:
         info = registry.inspect(model_name)
-    except Exception:
+    except Exception:  # noqa: BLE001 - auto-sizing is a convenience, not a gate
         logger.warning(
             "Could not inspect %s for auto-sizing; falling back to the standard profile.",
             model_name,
@@ -700,8 +808,38 @@ def _build_config(
     args: argparse.Namespace,
     spec: ExperimentSpec,
     model_name: str,
-    target_tokens: list[int],
+    settings: ResolvedSettings,
 ) -> RunConfig:
+    """Layer dataclass defaults, then the config file, then CLI flags.
+
+    Written as one function rather than spread across the sections so the
+    precedence order is readable in one place: each _pick() call reads
+    left-to-right as "CLI, then file, then dataclass default".
+    """
+
+    experiment = settings.experiment
+    machine = settings.machine
+
+    sweep_defaults = SweepConfig()
+    execution_defaults = ExecutionConfig()
+    judge_defaults = JudgeConfig()
+    embedding_defaults = EmbeddingConfig()
+    tokenizer_defaults = TokenizerConfig()
+
+    kv_cache_type = _pick(args.kv_cache_type, experiment.kv_cache_type, "f16")
+
+    target_tokens = _resolve_target_tokens(args, settings, model_name, kv_cache_type)
+
+    judge_model = _pick(args.judge_model, experiment.judge_model)
+
+    if settings.fleet.require_explicit_judge and not args.no_judge and not judge_model:
+        # LIMITATIONS 1.2: the default judge IS the generation model, and a
+        # self-judged llm_judge column is not reportable no matter how it
+        # scores. A fleet that intends to publish cannot default into it.
+        raise SystemExit(
+            "This config sets fleet.require_explicit_judge. Pass --judge-model, "
+            "set judge_model in the config file, or pass --no-judge."
+        )
 
     return RunConfig(
         benchmark_family=spec.family,
@@ -709,33 +847,80 @@ def _build_config(
         generation_model=model_name,
         requested_context_window=args.context,
         tokenizer=TokenizerConfig(
-            provider="tiktoken",
-            name=args.tokenizer,
+            provider=tokenizer_defaults.provider,
+            name=_pick(args.tokenizer, experiment.tokenizer_name, tokenizer_defaults.name),
         ),
         embedding=EmbeddingConfig(
-            enabled=not args.no_embedding,
-            provider="ollama",
-            model=args.embedding_model,
+            enabled=(
+                False
+                if args.no_embedding
+                else _pick(experiment.embedding_enabled, embedding_defaults.enabled)
+            ),
+            provider=embedding_defaults.provider,
+            model=_pick(
+                args.embedding_model,
+                experiment.embedding_model,
+                embedding_defaults.model,
+            ),
         ),
         judge=JudgeConfig(
-            enabled=not args.no_judge,
-            provider="ollama",
-            model=args.judge_model,
-            num_ctx=args.judge_context,
+            enabled=(
+                False if args.no_judge else _pick(experiment.judge_enabled, judge_defaults.enabled)
+            ),
+            provider=judge_defaults.provider,
+            model=judge_model,
+            num_ctx=_pick(args.judge_context, experiment.judge_num_ctx, judge_defaults.num_ctx),
         ),
         sweep=SweepConfig(
             target_tokens=target_tokens,
-            depths=args.depths,
-            needles_per_configuration=args.needles,
+            depths=_pick(args.depths, experiment.depths, sweep_defaults.depths),
+            needles_per_configuration=_pick(
+                args.needles,
+                experiment.needles_per_configuration,
+                sweep_defaults.needles_per_configuration,
+            ),
+            context_buffer_tokens=_pick(
+                experiment.context_buffer_tokens,
+                sweep_defaults.context_buffer_tokens,
+            ),
         ),
         execution=ExecutionConfig(
             continue_on_error=not args.fail_fast,
-            two_phase=not args.single_phase,
-            enforce_memory_preflight=not args.skip_memory_check,
-            kv_cache_bytes_per_element=1 if args.kv_cache_type == "q8_0" else 2,
+            two_phase=(
+                False
+                if args.single_phase
+                else _pick(machine.two_phase, execution_defaults.two_phase)
+            ),
+            sort_cases_by_num_ctx=_pick(
+                machine.sort_cases_by_num_ctx,
+                execution_defaults.sort_cases_by_num_ctx,
+            ),
+            keep_alive=_pick(machine.keep_alive, execution_defaults.keep_alive),
+            max_retries=_pick(machine.max_retries, execution_defaults.max_retries),
+            retry_backoff_sec=_pick(
+                machine.retry_backoff_sec,
+                execution_defaults.retry_backoff_sec,
+            ),
+            enforce_memory_preflight=(
+                False
+                if args.skip_memory_check
+                else _pick(
+                    machine.enforce_memory_preflight,
+                    execution_defaults.enforce_memory_preflight,
+                )
+            ),
+            memory_headroom_fraction=_pick(
+                machine.memory_headroom_fraction,
+                execution_defaults.memory_headroom_fraction,
+            ),
+            kv_cache_bytes_per_element=1 if kv_cache_type == "q8_0" else 2,
+            kv_cache_type=kv_cache_type,
+            think=experiment.think,
             dry_run=args.dry_run,
         ),
-        output_dir=args.output_dir,
+        output_dir=_pick(args.output_dir, machine.output_dir, "results"),
+        experiment_params=dict(experiment.params),
+        metadata={"settings": settings.provenance()},
     )
 
 
@@ -743,8 +928,14 @@ def _prepare(
     args: argparse.Namespace,
     specs: list[ExperimentSpec],
     model_name: str,
+    settings: ResolvedSettings,
 ) -> None:
-    """Health checks and model installation, shared by `run` and `all`."""
+    """Health checks and model installation, shared by `run` and `all`.
+
+    Takes the resolved settings rather than reading args directly, so it checks
+    the models and paths the run will ACTUALLY use. Before the config layer it
+    read argparse defaults, which silently ignored anything the file said.
+    """
 
     if args.skip_health_check:
         return
@@ -752,16 +943,26 @@ def _prepare(
     required = [model_name]
 
     if not args.no_judge:
-        required.append(args.judge_model or model_name)
+        required.append(_pick(args.judge_model, settings.experiment.judge_model) or model_name)
 
     if not args.no_embedding:
-        required.append(args.embedding_model)
+        required.append(
+            _pick(
+                args.embedding_model,
+                settings.experiment.embedding_model,
+                EmbeddingConfig().model,
+            )
+        )
 
     ok = _health_and_install(
         required_models=required,
         data_files=required_data_files(specs),
-        tokenizer_name=args.tokenizer,
-        output_dir=args.output_dir,
+        tokenizer_name=_pick(
+            args.tokenizer,
+            settings.experiment.tokenizer_name,
+            TokenizerConfig().name,
+        ),
+        output_dir=_pick(args.output_dir, settings.machine.output_dir, "results"),
         assume_yes=args.yes,
     )
 
@@ -862,9 +1063,23 @@ def _execute(
 ) -> None:
     """Run each selected experiment and report where the results landed."""
 
-    _prepare(args, specs, model_name)
+    settings = load_settings(
+        path=args.config,
+        machine_name=args.machine,
+        experiment_name=args.experiment_profile,
+    )
 
-    target_tokens = _resolve_target_tokens(args, model_name, args.kv_cache_type)
+    _prepare(args, specs, model_name, settings)
+
+    # A configuration that changes what is measured is never silent - the same
+    # discipline as printing the auto-sized sweep.
+    if settings.source_path is not None:
+        print(
+            f"Config: {settings.source_path}"
+            f" [machine={settings.machine_name or '-'}"
+            f" experiment={settings.experiment_name or 'defaults'}]"
+        )
+        print()
 
     outputs: list[tuple[ExperimentSpec, Path | None, str | None]] = []
 
@@ -873,7 +1088,7 @@ def _execute(
         print(f"[{index}/{len(specs)}] {spec.key}")
         print("=" * 60)
 
-        config = _build_config(args, spec, model_name, target_tokens)
+        config = _build_config(args, spec, model_name, settings)
 
         try:
             output_path = spec.runner(config)
@@ -949,6 +1164,18 @@ def main() -> None:
 
     parser = build_parser()
     args = parser.parse_args(_normalize_argv(sys.argv[1:]))
+
+    try:
+        _dispatch(args, parser)
+    except ConfigError as exc:
+        # A malformed config is a user error, not a crash. A traceback here
+        # buries the one line that says which key was wrong, which is the
+        # entire point of validating the file (D-016).
+        print(f"\nConfig error: {exc}\n", file=sys.stderr)
+        raise SystemExit(2) from None
+
+
+def _dispatch(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
 
     if args.command == "models":
         if args.models_command == "list":

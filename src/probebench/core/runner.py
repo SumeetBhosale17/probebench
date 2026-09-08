@@ -3,6 +3,7 @@ from collections.abc import Iterable
 from uuid import uuid4
 
 from probebench.core.case import BenchmarkCase
+from probebench.core.case_identity import sha256_text
 from probebench.core.config import RunConfig
 from probebench.core.evaluator import Evaluator
 from probebench.core.model import Model, ModelResponse
@@ -139,10 +140,25 @@ class BenchmarkRunner:
 
         case_metadata = dict(case.metadata)
 
-        case_metadata.pop(
-            "system_prompt",
-            None,
-        )
+        # The system prompt used to be POPPED here, on the reasoning that it
+        # was scaffolding. Since D-018 it is the TASK STATEMENT:
+        # instruction_compliance scores obedience to it, and a compliance rate
+        # against an instruction nobody recorded is not a weak measurement, it
+        # is an undefined one. No record of any schema version carried it, so
+        # "llama3:8b never obeyed" and "llama3:8b was never told" are
+        # indistinguishable in the archive (J-021).
+        #
+        # Kept in FULL, not only as a digest: ~150 characters, and LIMITATIONS
+        # 1.9 measured the QUESTION's wording at 19 points of accuracy, which
+        # makes prompt wording a first-order variable. A digest of a string
+        # nobody kept is unreadable. The digest is recorded alongside so a
+        # case_fingerprint difference becomes attributable - the fingerprint
+        # mixes the system prompt with eleven other components and cannot say
+        # which one moved.
+        system_prompt = case_metadata.get("system_prompt")
+
+        if system_prompt is not None:
+            case_metadata["system_prompt_sha256"] = sha256_text(system_prompt)
 
         model_options = case_metadata.pop(
             "model_options",
@@ -190,6 +206,11 @@ class BenchmarkRunner:
                 # what determines KV-cache cost and runner reuse.
                 "num_ctx": model_options.get("num_ctx"),
                 "kv_cache_bytes_per_element": (self.config.execution.kv_cache_bytes_per_element),
+                "kv_cache_type_requested": self.config.execution.kv_cache_type,
+                # What the SERVER was measured to be doing, as opposed to what
+                # the estimator above assumed (D-017). Absent when the probe
+                # could not run - never backfilled from the assumption.
+                **self.config.metadata.get("kv_probe", {}),
             },
             tokenization_metadata={
                 "provider": self.config.tokenizer.provider,
@@ -207,6 +228,16 @@ class BenchmarkRunner:
                     "model": self.config.resolved_judge_model(),
                     "num_ctx": self.config.judge.num_ctx,
                 },
+            },
+            host_metadata=self.config.metadata.get("host", {}),
+            response_metadata={
+                key: value
+                for key, value in response.metadata.items()
+                # `model` is already reported as model.name; the rest is
+                # provider evidence. Absent keys are dropped rather than
+                # written as null, so a record shows what was actually
+                # reported (invariant 8).
+                if key != "model" and value is not None
             },
             status=status,
             error=error,

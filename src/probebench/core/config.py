@@ -58,7 +58,20 @@ class ExecutionConfig:
     # Memory preflight
     enforce_memory_preflight: bool = True
     memory_headroom_fraction: float = 0.85
+    # What the estimator assumes. NOT what the server does - that is measured
+    # at run start and recorded separately (D-017).
     kv_cache_bytes_per_element: int = 2  # f16=2, q8_0=1, q4_0=0.5
+    kv_cache_type: str = "f16"
+
+    # Measuring KV precision costs two extra model loads at run start. Skipped
+    # for --dry-run, and disableable for a machine where the probe misbehaves.
+    probe_kv_cache: bool = True
+
+    # None = leave the model at its own default, which is what every archived
+    # run did. A SAMPLING variable, not an input one: it changes the output
+    # distribution at fixed input, so it is recorded but is deliberately not a
+    # case_fingerprint component (D-012, J-017).
+    think: bool | None = None
 
     dry_run: bool = False
 
@@ -85,6 +98,11 @@ class RunConfig:
     run_id: str | None = None
 
     metadata: dict[str, Any] = field(default_factory=dict)
+
+    # Benchmark-specific construction knobs from [experiment.*].params. Carried
+    # opaquely here and validated by the benchmark that owns them, so core/
+    # never has to know what a needle is.
+    experiment_params: dict[str, Any] = field(default_factory=dict)
 
     def resolved_judge_model(self) -> str:
         """Return the configured judge model."""

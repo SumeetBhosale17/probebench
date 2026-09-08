@@ -1,0 +1,38 @@
+# ProbeBench fleet configuration.
+#
+# [machine.*] may ONLY carry execution settings. Anything that could move a
+# number in the results belongs in [defaults] or [experiment.*], so that the
+# same command measures the same thing on every machine (D-016).
+#
+# Every machine sets PROBEBENCH_MACHINE once in its shell profile.
+
+[fleet]
+forbid_auto_profile    = false   # flip to true once the fleet starts pooling runs
+require_explicit_judge = false   # flip to true once a dedicated judge is installed
+calibration            = "calibration"
+
+[defaults]
+# Deliberately empty on day one: with nothing set here, every command resolves
+# exactly as it did before the config layer existed. That is the day-one no-op
+# D-016 predicts, and the first thing to verify.
+
+# Instrument check. Identical case_fingerprints on every machine; D-013
+# predicts identical accuracy, so any deviation is silent truncation, a
+# different quantization, or contention - worth finding before a 40-hour run
+# rather than after one.
+[experiment.calibration]
+target_tokens = [4000]
+depths        = [0.1, 0.5, 0.9]
+needles_per_configuration = 6
+
+[machine.laptop-a]        # 24 GB RAM, RTX 3050 4 GB, zero swap - verified
+memory_headroom_fraction = 0.85
+two_phase                = false   # 4.1 + zero swap: an OOM loses the whole run
+
+[machine.college-b]       # 16 GB RAM, RTX 3050 6 GB - smallest pool in the fleet
+memory_headroom_fraction = 0.80
+two_phase                = false
+
+[machine.laptop-c]        # 24 GB RAM, RTX 4050 6 GB - largest pool
+memory_headroom_fraction = 0.85
+two_phase                = false

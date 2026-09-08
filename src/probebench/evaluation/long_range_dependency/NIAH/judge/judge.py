@@ -5,6 +5,7 @@ from typing import Any
 import ollama
 
 from probebench.core.case import BenchmarkCase
+from probebench.core.case_identity import sha256_text
 from probebench.core.evaluator import (
     EvaluationResult,
     Evaluator,
@@ -86,13 +87,15 @@ class OllamaJudge(Evaluator):
             source=source,
         )
 
+        system_prompt = build_judge_system_prompt(with_groundedness=source is not None)
+
         response = with_retries(
             lambda: self.client.chat(
                 model=self.model_name,
                 messages=[
                     {
                         "role": "system",
-                        "content": build_judge_system_prompt(with_groundedness=source is not None),
+                        "content": system_prompt,
                     },
                     {
                         "role": "user",
@@ -156,6 +159,10 @@ class OllamaJudge(Evaluator):
         metadata: dict[str, Any] = {
             "judge_model": self.model_name,
             "judge_reason": reason,
+            # The judge prompt has been revised twice and moved llm_judge both
+            # times (LIMITATIONS 1.12). Recording its digest is what makes
+            # "which contract graded this run?" answerable from the record.
+            "judge_prompt_sha256": sha256_text(system_prompt),
         }
 
         if source is not None:

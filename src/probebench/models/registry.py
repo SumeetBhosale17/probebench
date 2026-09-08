@@ -56,6 +56,7 @@ class ModelInfo:
 
     block_count: int | None = None  # n_layers
     kv_head_count: int | None = None  # n_kv_heads (GQA)
+    head_count: int | None = None  # n_heads (attention); head_count/kv_head_count is the GQA ratio
     head_dim: int | None = None
     embedding_length: int | None = None
     size_bytes: int | None = None  # on-disk weight size
@@ -149,12 +150,11 @@ class OllamaModelRegistry:
         kv_head_count = self._find_int(model_info, ".attention.head_count_kv")
         head_dim = self._find_int(model_info, ".attention.key_length")
         embedding_length = self._find_int(model_info, ".embedding_length")
+        head_count = self._find_int(model_info, ".attention.head_count")
 
         # some GGFUs omit key_length. Derive it: head_dim = d_model / n_heads.
-        if head_dim is None and embedding_length:
-            head_count = self._find_int(model_info, ".attention.head_count")
-            if head_count:
-                head_dim = embedding_length // head_count
+        if head_dim is None and embedding_length and head_count:
+            head_dim = embedding_length // head_count
 
         # `show` does not report on-disk size, so cross-reference `list`.
         size_bytes = None
@@ -207,6 +207,7 @@ class OllamaModelRegistry:
             tokenizer_pre=tokenizer_pre,
             block_count=block_count,
             kv_head_count=kv_head_count,
+            head_count=head_count,
             head_dim=head_dim,
             embedding_length=embedding_length,
             size_bytes=size_bytes,

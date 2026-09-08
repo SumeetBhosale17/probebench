@@ -8,10 +8,15 @@ from probebench.benchmarks.long_range_dependency.NIAH.generator import (
     load_filler,
     load_needles,
 )
+from probebench.benchmarks.long_range_dependency.NIAH.identity import (
+    build_case_fingerprint,
+    build_case_key,
+)
 from probebench.benchmarks.long_range_dependency.NIAH.schemas import (
     NiahCase,
 )
 from probebench.core.case import BenchmarkCase
+from probebench.core.case_identity import sha256_text
 from probebench.core.tokenizer import Tokenizer
 
 logger = logging.getLogger(__name__)
@@ -41,11 +46,30 @@ class NiahBenchmark:
         context_buffer_tokens: int = 512,
         max_context_tokens: int | None = None,
         num_ctx_granularity: int = 512,
+        tokenizer_provider: str = "unknown",
+        tokenizer_name: str = "unknown",
+        question: str | None = None,
+        system_prompt: str | None = None,
     ) -> None:
         self.filler_path = filler_path
         self.needles_path = needles_path
 
+        # The class attributes remain the defaults, so an unconfigured run is
+        # byte-identical to the pre-config behaviour. LIMITATIONS 1.9 measured
+        # needle wording at 19 points of accuracy, which makes the question's
+        # wording a measured variable rather than scaffolding.
+        self.question = question or type(self).question
+        self.system_prompt = system_prompt or type(self).system_prompt
+
         self.tokenizer = tokenizer
+
+        # Passed in rather than read off the Tokenizer, which exposes only
+        # encode/decode. They are fingerprint components: two models given
+        # "the same" 4,000-token haystack built with different tokenizers did
+        # NOT see the same input (LIMITATIONS 1.1), and the fingerprint has to
+        # say so.
+        self.tokenizer_provider = tokenizer_provider
+        self.tokenizer_name = tokenizer_name
 
         self.target_tokens = target_tokens
         self.depths = depths
@@ -62,11 +86,28 @@ class NiahBenchmark:
 
         self.skipped: list[dict] = []
 
+        # Digests of the two data files, filled in by generate_cases().
+        # filler_sha256 is a fingerprint component - it is what detects the
+        # haystack corpus being swapped underneath a set of results.
+        # needles_sha256 is provenance only: it detects a needle's text being
+        # edited IN PLACE, which a per-needle digest cannot (D-015).
+        self.filler_sha256: str | None = None
+        self.needles_sha256: str | None = None
+
+        # Constant until the template/guard arms land. Held as attributes so
+        # identity is computed from one place rather than from literals
+        # scattered through the case builder.
+        self.needle_template = "marked"
+        self.tail_guard_tokens = 0
+
     def generate_cases(self) -> list[NiahCase]:
         """Generate all NIAH benchmark cases."""
 
         filler = load_filler(self.filler_path)
         needles = load_needles(self.needles_path)
+
+        self.filler_sha256 = sha256_text(filler)
+        self.needles_sha256 = sha256_text("\n".join(needles))
 
         selected_needles = needles[: self.needles_per_configuration]
 
@@ -153,6 +194,8 @@ class NiahBenchmark:
 
         prompt = f"{case.context}\n\nQuestion: {case.question}"
 
+        prompt_sha256 = sha256_text(prompt)
+
         return BenchmarkCase(
             case_id=case.case_id,
             benchmark=self.benchmark_family,
@@ -165,6 +208,35 @@ class NiahBenchmark:
                 "target_tokens": case.target_tokens,
                 "context_tokens": case.actual_tokens,
                 "depth": case.depth,
+                "case_key": build_case_key(
+                    target_tokens=case.target_tokens,
+                    depth=case.depth,
+                    needle=case.needle,
+                    needle_template=self.needle_template,
+                    tail_guard_tokens=self.tail_guard_tokens,
+                ),
+                "case_fingerprint": build_case_fingerprint(
+                    experiment=self.experiment_name,
+                    prompt_sha256=prompt_sha256,
+                    system_prompt=self.system_prompt,
+                    expected=case.expected_answer,
+                    needle=case.needle,
+                    target_tokens=case.target_tokens,
+                    depth=case.depth,
+                    tokenizer_provider=self.tokenizer_provider,
+                    tokenizer_name=self.tokenizer_name,
+                    filler_sha256=self.filler_sha256 or "",
+                    needle_template=self.needle_template,
+                    tail_guard_tokens=self.tail_guard_tokens,
+                ),
+                # The prompt itself is never stored - a 128k-token haystack per
+                # case would make the archive unusable - but the digest still
+                # detects corpus drift (D-012).
+                "prompt_sha256": prompt_sha256,
+                "needle_template": self.needle_template,
+                "tail_guard_tokens": self.tail_guard_tokens,
+                "filler_sha256": self.filler_sha256,
+                "needles_sha256": self.needles_sha256,
                 "system_prompt": self.system_prompt,
                 "model_options": case.model_options,
             },

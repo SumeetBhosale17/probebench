@@ -80,3 +80,181 @@ def test_every_archived_record_migrates() -> None:
             seen += 1
 
     assert seen > 0
+
+
+def test_1_0_migrates_all_the_way_to_current() -> None:
+    """The chain walk, not just each hop (1.0 -> 1.1 -> 1.2)."""
+
+    record = {
+        "schema_version": "1.0",
+        "case": {
+            "needle": "The secret access code is ALPHA-9921-X.",
+            "target_tokens": 4000,
+            "depth": 0.5,
+        },
+    }
+
+    migrated = migrate_record(record)
+
+    assert migrated["schema_version"] == CURRENT_SCHEMA_VERSION
+    assert migrated["case"]["case_key"].startswith("niah/t4000/d0.50/n")
+
+    # Never synthesised: the prompt was not stored, so there is nothing to
+    # hash, and the machine is not recoverable from the record.
+    assert migrated["case"]["case_fingerprint"] is None
+    assert "host" not in migrated
+    assert "done_reason" not in migrated.get("response", {})
+
+
+def test_migrated_case_key_matches_a_freshly_built_one() -> None:
+    """Archived and fresh keys must join, or case_key is pointless (D-015)."""
+
+    from probebench.benchmarks.long_range_dependency.NIAH.identity import build_case_key
+
+    needle = "The secret access code is ALPHA-9921-X."
+
+    migrated = migrate_record(
+        {
+            "schema_version": "1.1",
+            "case": {"needle": needle, "target_tokens": 4000, "depth": 0.5},
+        }
+    )
+
+    assert migrated["case"]["case_key"] == build_case_key(
+        target_tokens=4000,
+        depth=0.5,
+        needle=needle,
+        needle_template="marked",
+        tail_guard_tokens=0,
+    )
+
+
+def test_a_record_without_a_needle_still_migrates() -> None:
+    """case_key is absent rather than fabricated when it cannot be derived."""
+
+    migrated = migrate_record({"schema_version": "1.1", "case": {"case_id": "x"}})
+
+    assert migrated["schema_version"] == CURRENT_SCHEMA_VERSION
+    assert "case_key" not in migrated["case"]
+
+
+def test_migrations_are_pure_functions_of_the_record() -> None:
+    """No file I/O and no benchmark imports (D-015).
+
+    A migration that read needles.txt would produce different keys depending
+    on when it ran, so archived and fresh keys would silently stop joining.
+
+    Checked over the parsed AST rather than the source text, because the
+    comments explaining this rule necessarily mention the things it forbids.
+    """
+
+    import ast
+    import inspect
+
+    from probebench.core import migrations
+
+    tree = ast.parse(inspect.getsource(migrations))
+
+    imported: list[str] = []
+    called: list[str] = []
+
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            imported.extend(alias.name for alias in node.names)
+
+        elif isinstance(node, ast.ImportFrom) and node.module:
+            imported.append(node.module)
+
+        elif isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
+            called.append(node.func.id)
+
+    assert not [name for name in imported if "benchmarks" in name], imported
+    assert "open" not in called
+
+
+def test_1_2_to_1_3_does_not_backfill_a_measurement() -> None:
+    """Invariant 8: an unverified run must not claim a measured precision.
+
+    Every archived run set kv_cache_bytes_per_element from a flag that
+    configured only the estimator (J-016), so copying it into the measured
+    field would assert verification that never happened.
+    """
+
+    migrated = migrate_record(
+        {
+            "schema_version": "1.2",
+            "generation": {"kv_cache_bytes_per_element": 2},
+        }
+    )
+
+    assert migrated["schema_version"] == CURRENT_SCHEMA_VERSION
+    assert "kv_cache_bytes_per_element_measured" not in migrated["generation"]
+    assert "kv_cache_type_effective" not in migrated["generation"]
+
+    # What the run ASKED for is derivable, and only that.
+    assert migrated["generation"]["kv_cache_type_requested"] == "f16"
+
+
+def test_1_2_to_1_3_reads_q8_0_from_the_byte_count() -> None:
+    migrated = migrate_record(
+        {"schema_version": "1.2", "generation": {"kv_cache_bytes_per_element": 1}}
+    )
+
+    assert migrated["generation"]["kv_cache_type_requested"] == "q8_0"
+
+
+def test_1_3_to_1_4_does_not_synthesise_a_system_prompt() -> None:
+    """The whole point of the field is that "never told" stays visible (J-021)."""
+
+    migrated = migrate_record({"schema_version": "1.3", "case": {"case_id": "x"}})
+
+    assert migrated["schema_version"] == CURRENT_SCHEMA_VERSION
+    assert "system_prompt" not in migrated["case"]
+    assert "system_prompt_sha256" not in migrated["case"]
+
+
+def test_1_3_to_1_4_does_not_backfill_a_verdict() -> None:
+    """A migration may compute an identity, never a rule's verdict (D-018).
+
+    case_key was computed in 1.1 -> 1.2 because a key is definitionally stable.
+    A rule's verdict is not: lexical_exact_match's guard was rewritten twice in
+    one week. Baking one in would re-create J-005 using the tool built to cure
+    it.
+    """
+
+    migrated = migrate_record(
+        {
+            "schema_version": "1.3",
+            "metrics": {"lexical_exact_match": 1.0},
+            "response": {"predicted": "ALPHA-9921-X", "expected": "ALPHA-9921-X"},
+        }
+    )
+
+    assert "instruction_compliance" not in migrated["metrics"]
+
+
+def test_stored_compliance_still_matches_the_current_rule() -> None:
+    """Tripwire for the defect D-014 records but cannot repair.
+
+    Vacuous today - no archived record carries the metric - and that is the
+    point: it fires the first time the rule's definition drifts away from a
+    value already written to disk, instead of letting two definitions pool
+    silently under one key.
+    """
+
+    from probebench.evaluation.long_range_dependency.NIAH.compliance import is_answer_only
+
+    for path in sorted(RAW_RESULTS.glob("*.jsonl")):
+        for line in path.read_text(encoding="utf-8").splitlines():
+            if not line.strip():
+                continue
+
+            record = migrate_record(json.loads(line))
+            stored = record.get("metrics", {}).get("instruction_compliance")
+
+            if stored is None:
+                continue
+
+            predicted = record.get("response", {}).get("predicted") or ""
+
+            assert stored == (1.0 if is_answer_only(predicted) else 0.0), path.name

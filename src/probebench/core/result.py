@@ -44,6 +44,13 @@ class BenchmarkResult:
     # Evaluation configuration
     evaluation_metadata: dict[str, Any] = field(default_factory=dict)
 
+    # Hardware provenance for the machine that ran generation (D-013)
+    host_metadata: dict[str, Any] = field(default_factory=dict)
+
+    # Provider-reported evidence about the generation call: done_reason,
+    # prompt_eval_count, eval_count, server-side durations.
+    response_metadata: dict[str, Any] = field(default_factory=dict)
+
     status: str = "ok"  # ok | generation_error | evaluation_error
     error: str | None = None
 
@@ -65,6 +72,7 @@ class BenchmarkResult:
             "generation": self.generation_metadata,
             "tokenization": self.tokenization_metadata,
             "evaluation": self.evaluation_metadata,
+            "host": self.host_metadata,
             "case": {
                 "case_id": self.case_id,
                 **self.case_metadata,
@@ -75,6 +83,10 @@ class BenchmarkResult:
                 "latency_sec": self.latency_sec,
                 "status": self.status,
                 "error": self.error,
+                # Splatted LAST so a stray provider key cannot shadow status
+                # or error. The `case` block above splats the other way round
+                # and is a known hazard, guarded by a disjointness test.
+                **self.response_metadata,
             },
             "metrics": self.metrics,
             "evaluation_details": self.evaluation_details,

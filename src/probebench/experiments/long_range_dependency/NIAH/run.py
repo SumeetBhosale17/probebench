@@ -4,16 +4,21 @@ from pathlib import Path
 from uuid import uuid4
 
 from probebench.benchmarks.long_range_dependency.NIAH.benchmark import NiahBenchmark
+from probebench.benchmarks.long_range_dependency.NIAH.settings import NiahParams
 from probebench.core.case import BenchmarkCase
 from probebench.core.config import RunConfig
 from probebench.core.evaluator import Evaluator
+from probebench.core.hostinfo import collect_host_info
+from probebench.core.kvprobe import probe_kv_precision
 from probebench.core.model import ModelResponse
 from probebench.core.preflight import build_memory_plan, format_memory_plan
 from probebench.core.runner import BenchmarkRunner
+from probebench.evaluation.long_range_dependency.NIAH.compliance import (
+    InstructionComplianceEvaluator,
+)
 from probebench.evaluation.long_range_dependency.NIAH.judge import OllamaJudge
 from probebench.evaluation.long_range_dependency.NIAH.lexical import LexicalEvaluator
-from probebench.evaluation.long_range_dependency.NIAH.semantic import EmbeddingSemanticEvaluator
-from probebench.models.embedding_factory import create_embedding_provider
+from probebench.models.host import default_ollama_host
 from probebench.models.ollama import OllamaModel
 from probebench.models.registry import OllamaModelRegistry
 from probebench.reporting.jsonl import JSONLWriter
@@ -74,6 +79,10 @@ def _run_niah(
     registry.ensure_availability(
         config.generation_model,
         config.resolved_judge_model() if config.judge.enabled else "",
+        # NIAH stopped scoring with embeddings in D-019, but the model is
+        # still ensured present: the corpus-similarity analysis embeds needles
+        # and filler windows offline, and a missing model should fail at
+        # startup rather than halfway through an analysis.
         config.embedding.model if config.embedding.enabled else "",
     )
 
@@ -96,6 +105,25 @@ def _run_niah(
     config.metadata["tokenizer_model"] = model_info.tokenizer_model
     config.metadata["tokenizer_pre"] = model_info.tokenizer_pre
 
+    config.metadata["host"] = collect_host_info(default_ollama_host())
+
+    host_machine = config.metadata["host"]["machine"]
+
+    if host_machine is None:
+        logger.warning(
+            "Ollama host %s is not this machine: hardware provenance will be "
+            "absent from every record in this run (LIMITATIONS 1.16).",
+            config.metadata["host"]["ollama_host"],
+        )
+    else:
+        logger.info(
+            "Host: %s, %s logical cores, %.1f GiB RAM, GPUs: %s",
+            host_machine["cpu_model"],
+            host_machine["cpu_cores_logical"],
+            (host_machine["ram_total_bytes"] or 0) / 1024**3,
+            [gpu["name"] for gpu in host_machine["gpus"]] or "none detected",
+        )
+
     if (
         config.requested_context_window is not None
         and model_info.context_length is not None
@@ -109,26 +137,33 @@ def _run_niah(
         )
 
     tokenizer = create_tokenizer(config.tokenizer)
-    embedding_provider = create_embedding_provider(config.embedding)
 
     model = OllamaModel(
         model_name=config.generation_model,
+        think=config.execution.think,
         keep_alive=config.execution.keep_alive,
         max_retries=config.execution.max_retries,
         retry_backoff_sec=config.execution.retry_backoff_sec,
     )
 
+    _probe_kv_cache(config, model, model_info)
+
     evaluators: list[Evaluator] = [
         LexicalEvaluator(),
+        # Rules before models (invariant 9). Compliance is a syntactic property
+        # of a string already in hand, so it is decided offline and for free -
+        # and deliberately NOT gated behind --judge or --embedding, because a
+        # metric that only exists when a judge was configured could not be
+        # replayed over the archive.
+        InstructionComplianceEvaluator(),
     ]
 
-    if config.embedding.enabled and embedding_provider is not None:
-        evaluators.append(
-            EmbeddingSemanticEvaluator(
-                embedding_provider.embed,
-                batch_embedder=embedding_provider.embed_batch,
-            )
-        )
+    # semantic_similarity was dropped from NIAH in D-019. J-022 showed it was
+    # not a weak correctness signal but a near-perfect detector of response
+    # FORM (min 0.9918 bare vs max 0.7977 prose, zero overlap over 424
+    # records) - the same property InstructionComplianceEvaluator now decides
+    # exactly, offline, with a recorded rule version. The class is retained for
+    # future families whose expected answers are prose.
 
     if config.judge.enabled:
         judge_model = config.resolved_judge_model()
@@ -160,15 +195,23 @@ def _run_niah(
 
     max_context_tokens = config.requested_context_window or model_info.context_length
 
+    # Validated here rather than in core/: the benchmark owns these knobs, so a
+    # typo in one of them raises in the package that knows what they mean.
+    params = NiahParams(**config.experiment_params)
+
     benchmark = NiahBenchmark(
-        filler_path=FILLER_PATH,
-        needles_path=NEEDLES_PATH,
+        filler_path=params.filler_path,
+        needles_path=params.needles_path,
+        question=params.question,
+        system_prompt=params.system_prompt,
         tokenizer=tokenizer,
         target_tokens=config.sweep.target_tokens,
         depths=config.sweep.depths,
         needles_per_configuration=config.sweep.needles_per_configuration,
         context_buffer_tokens=config.sweep.context_buffer_tokens,
         max_context_tokens=max_context_tokens,
+        tokenizer_provider=config.tokenizer.provider,
+        tokenizer_name=config.tokenizer.name,
     )
 
     cases = benchmark.cases_as_generic()
@@ -228,6 +271,57 @@ def _run_niah(
     _log_summary(run_id, output_path, len(cases))
 
     return output_path
+
+
+def _probe_kv_cache(config: RunConfig, model: OllamaModel, model_info) -> None:
+    """Measure the server's KV precision and refuse a run that is mislabelled.
+
+    The flag only ever configured the memory ESTIMATOR (J-016); the server's
+    actual precision lives in a daemon we usually cannot inspect, so it is
+    measured rather than assumed (D-017, J-018).
+    """
+
+    if config.execution.dry_run or not config.execution.probe_kv_cache:
+        return
+
+    divisor = None
+
+    if model_info.block_count and model_info.kv_head_count and model_info.head_dim:
+        divisor = 2 * model_info.block_count * model_info.kv_head_count * model_info.head_dim
+
+    result = probe_kv_precision(model.client, config.generation_model, divisor)
+
+    config.metadata["kv_probe"] = result.to_metadata()
+
+    requested = config.execution.kv_cache_type
+
+    if not result.measured:
+        logger.warning(
+            "KV cache precision could not be measured (%s). Records will say "
+            "'%s' was REQUESTED and make no claim about what ran.",
+            result.reason,
+            requested,
+        )
+        return
+
+    logger.info(
+        "KV cache precision measured: %.3f bytes/element -> %s (requested %s)",
+        result.bytes_per_element,
+        result.kv_type or "unrecognised",
+        requested,
+    )
+
+    if result.kv_type is not None and result.kv_type != requested:
+        # Refusing beats archiving a mislabelled record. The server is the
+        # ground truth; the flag is a claim about the server.
+        raise RuntimeError(
+            f"KV cache precision mismatch: --kv-cache-type says {requested!r} but the "
+            f"server is running {result.kv_type!r} "
+            f"({result.bytes_per_element:.3f} bytes/element). "
+            "ProbeBench cannot change a running daemon's KV precision - set "
+            "OLLAMA_KV_CACHE_TYPE (and OLLAMA_FLASH_ATTENTION=1) on the OLLAMA "
+            "SERVICE and restart it, or drop the flag."
+        )
 
 
 def _case_num_ctx(case: BenchmarkCase) -> int:
