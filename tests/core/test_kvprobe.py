@@ -105,9 +105,18 @@ def test_probe_without_geometry_is_unavailable_not_wrong() -> None:
 
 
 def test_probe_refuses_too_small_a_context_separation() -> None:
-    result = probe_kv_precision(FakeClient(2.0), "m", DIVISOR, small_ctx=4096, large_ctx=8192)
+    """Below MIN_CTX_DELTA the KV term stops dominating the bimodal jitter.
 
-    assert not result.measured
+    4,096 of separation is the boundary and is ACCEPTED (J-028: at 128 KiB per
+    token that is 512 MiB of signal against ~80 MiB of jitter). Anything less
+    is refused rather than measured badly.
+    """
+
+    accepted = probe_kv_precision(FakeClient(2.0), "m", DIVISOR, small_ctx=4096, large_ctx=8192)
+    assert accepted.measured
+
+    refused = probe_kv_precision(FakeClient(2.0), "m", DIVISOR, small_ctx=4096, large_ctx=6000)
+    assert not refused.measured
 
 
 def test_unavailable_result_records_no_measurement() -> None:
@@ -130,3 +139,27 @@ def test_an_unrecognised_measurement_is_not_reported_as_verified() -> None:
     unrecognised = probe_kv_precision(FakeClient(1.5), "m", DIVISOR).to_metadata()
     assert unrecognised["kv_cache_type_effective"] is None
     assert unrecognised["kv_cache_probe"] == "measured_unrecognised"
+
+
+def test_probe_clamps_to_the_model_window() -> None:
+    """Ollama clamps num_ctx to the model's window and /api/ps reports the
+    clamped value, so an unclamped probe matches nothing (J-028)."""
+
+    client = FakeClient(2.0)
+
+    # llama3:8b's window. Unclamped, the probe would ask for 16,384 and the
+    # server would report 8,192.
+    result = probe_kv_precision(client, "m", DIVISOR, max_context=8192)
+
+    assert result.measured
+    assert result.kv_type == "f16"
+    assert result.large_ctx == 8192
+
+
+def test_a_window_too_small_to_probe_says_so() -> None:
+    """The failure must blame the window, not the server."""
+
+    result = probe_kv_precision(FakeClient(2.0), "m", DIVISOR, max_context=6000)
+
+    assert not result.measured
+    assert "window" in (result.reason or "")

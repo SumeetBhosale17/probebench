@@ -48,12 +48,16 @@ so the error is observable rather than assumed. The first figure (J-015):
 `qwen3:0.6b` reports **4,101** tokens for a nominal 4,000 cl100k haystack,
 a **+2.5%** expansion.
 
-That does not lift the BLOCKING rating. One family is measured, the archive's
-`llama3` runs cannot be (the model is not installed on this host, and
-`prompt_eval_count` was not recorded when they ran), and a 2.5% expansion on
-the `llama3:8b` sweep — 7,000–8,000 nominal against a `num_ctx` of 7,680–8,192
-— would leave only ~200 tokens of headroom, with silent front-truncation
-beyond that.
+**llama-bpe measured too (J-027).** `llama3:8b` reports **7,018** tokens for a
+nominal 7,000 (+0.26%) and **8,012** for 8,000 (+0.15%) — an order of magnitude
+smaller than qwen3's expansion. The feared front-truncation on the archived
+`llama3:8b` sweep did not happen: 7,018 tokens sat 662 inside `num_ctx` 7,680,
+so J-011's failures are not truncation artefacts.
+
+That does not lift the BLOCKING rating. Two families are now measured and they
+differ by 10x in expansion, which is precisely why a cl100k-built haystack
+cannot be called "4,000 tokens" for an arbitrary model. The x-axis is still
+nominal; it is now nominal with a known, model-specific error.
 
 Fix: tokenize with the target model's own tokenizer (Ollama exposes
 `tokenizer.ggml.model` / `.pre`; the GGUF vocab can be read directly, or
@@ -448,6 +452,18 @@ within-model spread on `qwen3:0.6b` is *itself* total — 100% to 0% — so
 The one genuinely matched cell is 32k, where `qwen3:4b` is 3/3 and
 `qwen3:0.6b` is 12/27. That is a real model effect at **n=3**.
 
+**RESOLVED in favour of context length (J-027).** The matched run was done:
+`llama3:8b` at 4,000 tokens is **50%** compliant, not 0%. Its 0/330 in the
+archive was measured entirely at 7–8k. What J-021 read as a model effect was
+mostly context length.
+
+A partial model effect survives — at a matched 4k, `llama3:8b` is 50% where
+both qwen3 models are 100% — but the reportable quantity is not a compliance
+rate. Every model measured degrades with context, and **the collapse point is
+model-specific**: `llama3:8b` reaches 0% by 7k, `qwen3:0.6b` by 40k, and
+`qwen3:4b` has not collapsed anywhere tested. Report collapse points, not
+rates, and never compare rates across models without stating context.
+
 A second confound sits underneath (J-017): qwen3 emits reasoning into a
 separate `thinking` channel that never reaches `predicted`, while llama3 has
 no such channel. So the compliance rule measures the *final* channel on one
@@ -553,7 +569,11 @@ count is a derived quantity only the estimator needs.
 The probe (D-017, J-018) measures bytes-per-element by differencing the `size`
 that `/api/ps` reports for one model loaded at two context sizes. It is the
 only method that works against a service-managed or remote daemon, but it has
-three limits.
+three limits. (It had a fourth, now fixed: it probed at a hardcoded 16,384 and
+so failed on every model with a smaller window, because Ollama clamps `num_ctx`
+and `/api/ps` reports the clamped value — J-028. It now clamps to the model's
+advertised context, and `MIN_CTX_DELTA` is 4,096, chosen from signal size
+rather than as a round number.)
 
 **It reads bimodally, not noisily, and the two modes are ~16% apart.**
 Repeated probes of one unchanged server return two discrete values that each

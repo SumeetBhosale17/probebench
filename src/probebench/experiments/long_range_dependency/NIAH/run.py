@@ -289,7 +289,15 @@ def _probe_kv_cache(config: RunConfig, model: OllamaModel, model_info) -> None:
     if model_info.block_count and model_info.kv_head_count and model_info.head_dim:
         divisor = 2 * model_info.block_count * model_info.kv_head_count * model_info.head_dim
 
-    result = probe_kv_precision(model.client, config.generation_model, divisor)
+    result = probe_kv_precision(
+        model.client,
+        config.generation_model,
+        divisor,
+        # Ollama clamps num_ctx to the model's window and /api/ps reports the
+        # clamped value, so the probe must know the ceiling or it matches
+        # nothing (J-028).
+        max_context=model_info.context_length,
+    )
 
     config.metadata["kv_probe"] = result.to_metadata()
 

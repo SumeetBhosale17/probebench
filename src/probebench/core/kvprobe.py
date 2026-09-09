@@ -36,10 +36,14 @@ logger = logging.getLogger(__name__)
 DEFAULT_SMALL_CTX = 4_096
 DEFAULT_LARGE_CTX = 16_384
 
-# Minimum separation before a measurement is trusted at all. Below this the
-# per-context overhead that causes the 3.4% residual is no longer small
-# relative to the signal.
-MIN_CTX_DELTA = 8_192
+# Minimum separation before a measurement is trusted at all.
+#
+# Chosen from SIGNAL SIZE, not from a round number (J-028). At llama3:8b's
+# 128 KiB/token a 4,096-token separation is 512 MiB of KV cache, and telling
+# f16 from q8_0 means telling 512 MiB from 272 MiB. The probe's bimodal jitter
+# is ~16%, about 80 MiB here - ample margin. The previous 8,192 was a guess and
+# it excluded every model with a window at or below 12k.
+MIN_CTX_DELTA = 4_096
 
 # Known KV element sizes, in bytes.
 #
@@ -145,22 +149,37 @@ def probe_kv_precision(
     small_ctx: int = DEFAULT_SMALL_CTX,
     large_ctx: int = DEFAULT_LARGE_CTX,
     settle_seconds: float = 1.5,
+    max_context: int | None = None,
 ) -> KvProbeResult:
     """Measure bytes-per-element of the server's KV cache.
 
     `kv_geometry_divisor` is `2 * n_layers * n_kv_heads * head_dim` from GGUF
     metadata. It is passed in rather than derived here so this module stays
     free of model-registry concerns and is trivially testable.
+
+    `max_context` is the model's advertised window. Ollama CLAMPS a requested
+    num_ctx to it, and /api/ps then reports the clamped value - so probing
+    llama3:8b (8,192) at 16,384 matched no entry and failed with a message
+    blaming the server (J-028). Clamping here makes the probe work for
+    short-window models and makes the remaining failure honest.
     """
 
     if not kv_geometry_divisor:
         return KvProbeResult(None, None, reason="KV geometry unknown for this model")
 
+    if max_context is not None:
+        large_ctx = min(large_ctx, max_context)
+        small_ctx = min(small_ctx, max_context)
+
     if large_ctx - small_ctx < MIN_CTX_DELTA:
         return KvProbeResult(
             None,
             None,
-            reason=f"context separation {large_ctx - small_ctx} below minimum {MIN_CTX_DELTA}",
+            reason=(
+                f"model window {max_context or large_ctx} leaves only "
+                f"{large_ctx - small_ctx} tokens of separation, below the "
+                f"{MIN_CTX_DELTA} needed for a trustworthy measurement"
+            ),
         )
 
     try:

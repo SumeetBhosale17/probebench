@@ -2005,3 +2005,150 @@ and was simply narrower than the band on f16, which is why it went unnoticed.
 **Disposition.** limitation — corrects §2.7's noise characterisation, and the
 `None`-classification hole needs closing so an unrecognised measurement is
 visibly not a verification.
+
+---
+
+## J-027 — It was context length, not model family. Compliance collapses, and the collapse point is model-specific
+Status: open
+
+**Observed.** The context-matched run §1.17 demanded, plus the J-015 audit, on
+`llama3:8b` with `qwen3:4b` judging:
+
+```
+llama3:8b @ 4,000      n=18   retrieval 100.0%   compliance  50.0%
+llama3:8b @ 7-8,000    n=36   retrieval  94.4%   compliance   0.0%
+```
+
+Set beside the archive:
+
+```
+                4k      7-8k     32k     36k     40k
+qwen3:4b       100%       -      100%      -       -
+qwen3:0.6b     100%       -       44%     20%      0%
+llama3:8b       50%       0%       -       -       -
+```
+
+**Expected.** J-021 reported `llama3:8b` at 0/330 and `qwen3:4b` at 37/37 and
+read it as a model effect — "the spread between models is total". §1.17 flagged
+that the comparison was confounded because the two models shared no context
+length.
+
+**The confound was real and the headline was wrong.** `llama3:8b` obeys the
+instruction **half the time at 4k**. Its 0/330 in the archive was measured
+entirely at 7–8k. What J-021 attributed to model family was mostly context
+length.
+
+**Mechanism.** Compliance degrades with context in *every* model measured, and
+the collapse point differs by model:
+
+- `llama3:8b` is at 50% by 4k and 0% by 7k.
+- `qwen3:0.6b` holds 100% at 4k, falls to 44% at 32k, 0% at 40k.
+- `qwen3:4b` holds 100% at both 4k and 32k (n=3 at 32k).
+
+So a **model effect survives, but a partial one**: at a matched 4k, `llama3:8b`
+is 50% where both qwen3 models are 100%. That is a real difference and it is
+not the 100%-vs-0% separation J-021 claimed. The right framing is not "which
+models obey" but **"at what context does each model stop obeying"** — a
+collapse point, which is exactly the shape CLAUDE.md's build order wanted from
+a length sweep and never got from retrieval.
+
+Retrieval, by contrast, barely moves: 100% at 4k and 94.4% at 7–8k. The two
+axes come apart, which is the whole argument for D-018.
+
+**Three secondary findings from the same runs.**
+
+*The J-015 `done_reason` audit is inconclusive, not negative.* All 36 records
+are `done_reason: "stop"` — no truncation. But the run **did not reproduce**
+J-011's dangling-output mode: the four short responses are complete sentences
+("The special key is 8829-BETA-Z."), not the `"...is:"` fragments J-011
+recorded. O5's truncation hypothesis is untested rather than disproved, and
+reproducing the mode is a precondition for testing it.
+
+*§1.1's front-truncation worry is unfounded for llama-bpe on this corpus.*
+Measured expansion is **+0.26%** at nominal 7,000 (7,018 tokens) and **+0.15%**
+at 8,000 (8,012) — an order of magnitude smaller than qwen3's +2.5% (J-015),
+and 662 tokens inside `num_ctx` 7,680. The archived `llama3:8b` sweep was never
+close to truncating, so J-011's failures are not truncation artefacts.
+
+*The non-compliant responses at 4k echo the marker.* Two of the nine:
+
+```
+'[IMPORTANT SECRET]: The magic word to unlock the door is CRIMSON-EAGLE-4...'
+'The important secret mentioned in the text is:\n\n[IMPORTANT SECRET]: Reme...'
+```
+
+The model reproduces the insertion marker verbatim. That is
+`niah.needle_verbatim_echo` from the planned taxonomy — a `FORMAT_VIOLATION`
+subtype — observed for the first time, and it ties back to J-012: the marker is
+a measured variable and models interact with it directly.
+
+**Validated.** Runs `de2cecc1c5b7` (4k, 18 cases) and `7de845de1d9d` (7–8k, 36
+cases), single-phase, independent judge, schema 1.4.
+
+**Implies.** Four things.
+
+1. **J-021's per-model claim is withdrawn** and §1.17 is resolved in favour of
+   context length, with a residual partial model effect at matched 4k.
+2. The reportable result is a **collapse point per model**, not a compliance
+   rate. That needs a length sweep per model, which is now the obvious next
+   experiment and is cheap for `llama3:8b` (7 s/case, 8k ceiling).
+3. `qwen3:4b`'s 100% at 32k is the outlier worth pressing: it is the only
+   model that has not collapsed anywhere tested, and it has only 3 records at
+   32k. A sweep to its 262k claim is the test.
+4. The taxonomy gains an observed label. `needle_verbatim_echo` was
+   hypothesised in CLAUDE.md; it is now in the archive with two instances.
+
+**Disposition.** publishable — this is the first result in the project with a
+mechanism, a matched control, and a corrected prior.
+
+---
+
+## J-028 — The KV probe silently fails on any model with a window under 16k
+Status: open
+
+**Observed.** Both `llama3:8b` runs logged:
+
+```
+WARNING: KV cache precision could not be measured (server did not report a
+size for the loaded model). Records will say 'f16' was REQUESTED and make no
+claim about what ran.
+```
+
+Diagnosis:
+
+```
+llama3:8b advertised context: 8,192
+probe requests num_ctx=16,384 -> /api/ps reports context_length=8192
+```
+
+**Expected.** A measurement, as for both qwen3 models.
+
+**Mechanism.** The probe hardcodes `DEFAULT_LARGE_CTX = 16_384` and matches the
+`/api/ps` entry on `context_length == num_ctx`. Ollama **clamps** a requested
+`num_ctx` to the model's advertised maximum, so for `llama3:8b` it reports
+8,192 where the probe expects 16,384, no entry matches, and the probe reports
+the generic "did not report a size".
+
+So the probe is broken for **every model with a context window below 16,384** —
+which is `llama3:8b`, `mistral:7b`'s shorter variants, and most older models.
+It failed safe (no false claim) but the diagnostic message points at the server
+rather than at the caller, which is why it read as an Ollama problem.
+
+**Validated.** The clamp reproduced directly: requesting 16,384 for
+`llama3:8b` yields `context_length: 8192` in `/api/ps`.
+
+**Implies.** Two things.
+
+1. `large_ctx` must be clamped to the model's advertised context before
+   probing, and the failure message must distinguish "the model cannot hold
+   the probe's context" from "the server said nothing".
+2. `MIN_CTX_DELTA = 8_192` then becomes the binding constraint for short-window
+   models: clamped to 8,192, `llama3:8b` gives a 4,096-token separation. That
+   minimum was a guess. The defensible criterion is signal size: at 128 KiB per
+   token, a 4,096-token delta is **512 MiB** of KV, and telling f16 from q8_0
+   means telling 512 MiB from 272 MiB. The bimodal jitter is ~16%, about
+   80 MiB. Ample. The minimum should be lowered to 4,096 with that reasoning
+   recorded, not left at a number nobody justified.
+
+**Disposition.** limitation — corrects §2.7, which claims three limits and
+missed this one.
