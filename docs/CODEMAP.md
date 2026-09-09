@@ -42,8 +42,8 @@ second benchmark family reuse all of it.
 | `case_identity.py` | Hashes a case's identity | Canonical JSON (sorted keys) + SHA-256, with `FINGERPRINT_VERSION` stamped **inside** the digest; refuses raw floats | **D-012, invariant 11.** `case_id` shifts when the sweep changes (J-004), so results could not be joined across runs. Rejecting floats is not fussiness: `0.1+0.2` and `0.3` would hash differently |
 | `runner.py` | Runs cases: `generate()` then `evaluate()` | Split into two phases so all generation happens before any judging | **Invariant 3 / R-002.** An interleaved judge evicts the generation model every case — a real production failure. Also enforces **invariant 1**: a failed evaluator leaves its metric ABSENT, never `0.0`. Since D-018 it also *records* the system prompt instead of discarding it — that string is the task statement, and a compliance rate against an unrecorded instruction is undefined (J-021) |
 | `result.py` | `BenchmarkResult` and `to_record()` | Builds the nested JSON shape written to disk | The record *is* the research output. If a fact is not here it is unavailable later — which is why the archive's `llama3` runs can never be re-analysed |
-| `schema.py` | `CURRENT_SCHEMA_VERSION`, currently `"1.4"` | Two constants | **Invariant 7.** The archive once had three record shapes all declaring `"1.0"` (J-005) |
-| `migrations.py` | Upgrades old records to the current shape | A `(from, to)` map walked in a chain; each migration is a **pure function of the record** | Lets 426 archived records be read as one shape. Purity is enforced by test (D-015): a migration that read `needles.txt` would produce different keys depending on when it ran |
+| `schema.py` | `CURRENT_SCHEMA_VERSION`, currently `"1.5"` | Two constants | **Invariant 7.** The archive once had three record shapes all declaring `"1.0"` (J-005) |
+| `migrations.py` | Upgrades old records to the current shape | A `(from, to)` map walked in a chain; each migration is a **pure function of the record** | Lets 590 archived records be read as one shape. Purity is enforced by test (D-015): a migration that read `needles.txt` would produce different keys depending on when it ran. 1.4→1.5 is where that rule bites hardest — NIAH's generator is deterministic so an archived inventory *could* be reconstructed, and is deliberately not |
 | `preflight.py` | Predicts whether a context fits in memory | The KV cache formula `2·layers·kv_heads·head_dim·bytes` against `MemAvailable + free VRAM` | **R-001, invariant 2.** The project's most novel piece. Derived from a real 36 GB allocation crash and reproduces it exactly |
 | `kvprobe.py` | Measures the server's *actual* KV precision | Loads one model at two context sizes, differences `/api/ps` `size`; weights and buffers cancel | **D-017, J-018.** `--kv-cache-type` only fed the estimator and mislabelled records (J-016). The daemon runs as another user so its config is unreadable — so measure the behaviour instead |
 | `hostinfo.py` | Records which machine ran the work | `/proc/cpuinfo`, `/proc/meminfo`, one `nvidia-smi` call; **`null` when Ollama is remote** | **D-013.** Latency was uninterpretable across three machines. Refusing to guess is the point: client specs on a remote run would look authoritative and be wrong |
@@ -54,20 +54,50 @@ second benchmark family reuse all of it.
 | `tokenizer.py`, `embedding.py` | Provider interfaces | ABCs | Same reason |
 | `benchmark.py` | **Empty.** Placeholder for a `CaseGenerator` protocol | — | Intentional: benchmarks are duck-typed today. Listed so it is not mistaken for a deleted file |
 
-## `benchmarks/long_range_dependency/NIAH/` — case construction
+## `benchmarks/long_range_dependency/` — case construction
+
+Three experiments now share one primitive. **`haystack.py` sits at the family
+level, not inside NIAH**, because splicing k blocks into a token-controlled body
+is a family capability — the experiments differ in what they plant and what they
+ask, not in how planting works.
 
 | File | What it does | Why it exists |
 |---|---|---|
-| `generator.py` | Builds one haystack: tokenize filler, splice the needle at `depth`, decode | The needle is inserted as `\n\n[IMPORTANT SECRET]: …\n\n`. **That marker is a measured variable, not scaffolding** — at depth 1.0 the model disputes it as an artifact (J-012). Also re-encodes the 3.3 MB corpus on every call, a known inefficiency |
-| `benchmark.py` | Iterates the (length × depth × needle) grid; converts to `BenchmarkCase` | Where `num_ctx` gets bucketed to 512 tokens — a one-token difference spawns a second `llama-server` (R-002). Also where case identity is attached |
-| `identity.py` | Builds `case_key` and `case_fingerprint` for NIAH | Two keys answer different questions: the grid *coordinate* (survives construction changes) and the *content address* (asserts identical bytes). D-012 |
-| `settings.py` | Typed validation of NIAH's knobs | `NiahParams` defaults must equal the old hardcoded values **byte-for-byte**, or the whole archive stops joining. There is a test for exactly that |
-| `schemas.py` | `NiahCase` | The benchmark-internal shape before conversion |
+| `haystack.py` | `build_haystack`: splice k blocks at k depths, return the text **plus the full inventory** | Depths are computed against the **original** body, never the growing one. The lesser reason is that depths stay independent; the real one is that it holds the filler *content* at each site identical across the grid — §1.9 makes which Tolstoy passage neighbours a needle a first-order variable, and a growing body would slide every later site as a side effect of k. Collisions **raise**: shifting perturbs the background exactly where the signal is, dropping varies k across cells |
 
-Data lives in `data/long_range_dependency/NIAH/`: `filler_text.txt` is *War
-and Peace* (**not neutral** — its opening court intrigue is answered instead
-of the needle 34 times, §1.9) and `needles.txt` holds six needles whose
-wording spans **19 points** of accuracy.
+### `NIAH/` — the original single-needle experiment
+
+| File | What it does | Why it exists |
+|---|---|---|
+| `generator.py` | Re-exports the primitive; keeps `create_haystack` and the `" is "` answer parser | `create_haystack` has **no production callers left** — it survives as the shape the archive was built with and as the frozen signature the byte-identity test pins. The marker `\n\n[IMPORTANT SECRET]: …\n\n` is a **measured variable, not scaffolding** (J-012, J-027) |
+| `benchmark.py` | Iterates the (length × depth × needle) grid | Where `num_ctx` is bucketed to 512 tokens — a one-token difference spawns a second `llama-server` (R-002). Encodes the 3.3 MB corpus **once per sweep** rather than once per case. `actual_tokens` comes from the decoded TEXT, never from the assembled counter (J-030, §1.19) |
+| `identity.py` | `case_key` and `case_fingerprint` for NIAH | Two keys answer different questions: the grid *coordinate* and the *content address*. D-012 |
+| `settings.py` | Typed validation of NIAH's knobs | `NiahParams` defaults must equal the old hardcoded values **byte-for-byte**, or the archive stops joining. Tested |
+| `schemas.py` | `NiahCase` | Carries `needle_inventory`, `realised_depth`, `filler_tokens_used` since 1.5 |
+
+### `NIAH_distractor/` — keyed discrimination (D-022, D-023)
+
+| File | What it does | Why it exists |
+|---|---|---|
+| `needles.py` | Loads the keyed inventory; one template, k+1 subjects | **Only the subject varies**, so a wrong answer equal to a planted code is *necessarily* a discrimination failure rather than "that needle's wording was harder" — the 19-point confound §1.9 measured. Uniformity is asserted by test, not by convention |
+| `settings.py` | `BACKGROUND_DEPTHS` on **sixteenths**, k ladder `(0,1,2,4,8)` | Sixteenths are disjoint from the tenths the target sweeps, which is what keeps `build_haystack`'s collision branch unreachable. **k=0 is not degenerate** — it is D-023's calibration, the only thing that makes the keyed-vs-legacy delta measurable |
+| `benchmark.py` | The (length × depth × k × target) grid | `select_background_depths` spreads decoys **evenly** rather than taking the first k, which would confound decoy *count* with decoy *position* |
+| `identity.py` | `niahd/…` keys; `distractors` finally populated | The fingerprint slot D-012 pre-registered three schema versions ago, cashed in here — so no `FINGERPRINT_VERSION` bump was needed |
+
+### `NIAH_multihop/` — two-hop resolution
+
+| File | What it does | Why it exists |
+|---|---|---|
+| `settings.py` | Pointer template, `POINTER_SUBJECT`, registry sizes `(2,4,8)` | **No k=0 or k=1 cell**: with one entry the only code present is the answer, so returning it proves nothing about composing two hops. The pointer subject must have no registry entry of its own, or the question has two readings — raises if it does |
+| `benchmark.py` | Pointer at the swept depth, registry on the background slots | The **pointer carries no value** — the whole task is that the answer is elsewhere, and putting it in the pointer would let a single-hop read score as a two-hop one. The answer's slot moves across the sweep, so a registry positional bias is visible rather than baked in |
+| `identity.py` | `niahmh/…` keys | The hop — *which* entry the pointer names — is a design point, so it is in both keys |
+
+Data: `data/long_range_dependency/NIAH/filler_text.txt` is *War and Peace*
+(**not neutral** — its opening court intrigue is answered instead of the needle
+34 times, §1.9) and `needles.txt` holds six needles whose wording spans **19
+points** of accuracy. `data/long_range_dependency/NIAH_distractor/keyed_needles.jsonl`
+holds twelve keyed needles that are **all exactly 15 tokens**, one value shape,
+distinct leading characters, none occurring in the filler.
 
 ## `evaluation/long_range_dependency/NIAH/` — scoring
 
@@ -94,7 +124,8 @@ wording spans **19 points** of accuracy.
 | File | What it does | Why it exists |
 |---|---|---|
 | `registry.py` | `ExperimentSpec` registry | Adding an experiment should require **no edits elsewhere** — the CLI, `all`, and the health check all read from here |
-| `long_range_dependency/NIAH/run.py` | Wires everything into one run | The order matters: settings → host → KV probe → cases → memory plan → generate → evaluate → write. The probe runs *before* generation so it cannot evict the sweep's runner |
+| `pipeline.py` | Everything generic: run id, output path, model inspection, host, KV probe, memory plan, two-phase execution, summary | **D-021.** The order is knowledge, not arrangement: settings → host → KV probe → cases → memory plan → generate → evaluate → write. The probe runs *before* generation so it cannot evict the sweep's runner (invariant 3). Three copies of that ordering would be two chances to regress it silently. The log file handler attaches to the **`probebench` package** logger — on a module logger it would drop every family's own messages after the extraction, silently |
+| `<family>/<EXPT>/run.py` | An `ExperimentPlug`: build cases, build evaluators | Exactly the three things that differ between experiments. NIAH's went 485 → 119 lines. Each carries a ⚠️ on `LexicalEvaluator` for the keyed families, which is **known-optimistic** there (§1.18) |
 
 ## `reporting/`
 
@@ -122,6 +153,8 @@ user asked for the default" from "the user did not ask").
 | `tests/benchmarks/test_niah_params.py` | Config defaults equal the old hardcoded values — the archive's join depends on it |
 | `tests/evaluation/test_lexical.py` | The 15 known repudiations score 0.0; the J-014 borderline case scores 1.0 |
 | `tests/evaluation/test_compliance.py` | A **bare but wrong** answer still scores 1.0 — if that ever fails, the rule has collapsed into `lexical_exact_match` and the 2×2 is gone |
+| `tests/benchmarks/test_haystack_identity.py` | **The constraint the whole archive rests on.** Three pinned digests, an independent reference implementation over the full grid, and a replay rebuilding 166 archived fingerprints end to end. The reference leg is deliberately *not* a call to `create_haystack` — that now delegates to `build_haystack`, so comparing against it would be a tautology |
+| `tests/benchmarks/test_keyed_families.py` | The keyed premise: every needle costs **the same token count**, one value shape, none present in the filler; background depths cannot collide with target depths; the pointer **never** carries the answer; changing a decoy changes the fingerprint |
 
 ## Outputs
 

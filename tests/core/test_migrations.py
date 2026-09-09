@@ -258,3 +258,63 @@ def test_stored_compliance_still_matches_the_current_rule() -> None:
             predicted = record.get("response", {}).get("predicted") or ""
 
             assert stored == (1.0 if is_answer_only(predicted) else 0.0), path.name
+
+
+def test_1_4_to_1_5_does_not_reconstruct_an_inventory() -> None:
+    """The tempting alternative, refused deliberately.
+
+    NIAH's generator is deterministic, so an inventory for an archived record
+    could be rebuilt exactly from needle/target_tokens/depth. Doing it here
+    would make the migration depend on needles.txt and the 3.3 MB corpus - so
+    the same record would migrate differently depending on when it ran, which
+    is what test_migrations_are_pure_functions_of_the_record forbids.
+    """
+
+    record = {
+        "schema_version": "1.4",
+        "case": {
+            "needle": "The secret access code is ALPHA-9921-X.",
+            "target_tokens": 4000,
+            "depth": 0.5,
+            "system_prompt": "Answer ONLY with the secret code found in the text.",
+        },
+        "response": {"predicted": "ALPHA-9921-X", "expected": "ALPHA-9921-X"},
+        "metrics": {"lexical_exact_match": 1.0},
+    }
+
+    migrated = migrate_record(record)
+
+    assert migrated["schema_version"] == CURRENT_SCHEMA_VERSION
+
+    # Absent, not empty. An empty list would assert "nothing was planted",
+    # which is false - one needle was, we just did not record where.
+    for field in ("needle_inventory", "realised_depth", "filler_tokens_used"):
+        assert field not in migrated["case"], field
+
+
+def test_no_archived_record_gains_an_inventory() -> None:
+    """Invariant 8 applied to construction: unrecorded is not empty."""
+
+    if not RAW_RESULTS.is_dir():
+        pytest.skip("no archived results present")
+
+    checked = 0
+
+    for path in sorted(RAW_RESULTS.glob("*.jsonl")):
+        for line in path.read_text(encoding="utf-8").splitlines():
+            if not line.strip():
+                continue
+
+            record = json.loads(line)
+
+            # Records WRITTEN at 1.5 carry a real inventory - that is the whole
+            # point of the version. The guard is about what a MIGRATION may
+            # invent, so it applies only to records that predate the field.
+            if record.get("schema_version") == "1.5":
+                continue
+
+            migrated = migrate_record(record)
+            assert "needle_inventory" not in migrated.get("case", {}), path.name
+            checked += 1
+
+    assert checked > 0, "a test that checked zero records would pass forever"

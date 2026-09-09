@@ -163,6 +163,43 @@ def _migrate_1_3_to_1_4(
     return migrated
 
 
+def _migrate_1_4_to_1_5(
+    record: dict[str, Any],
+) -> dict[str, Any]:
+    """1.5 records the needle inventory: what was planted, where, and as what.
+
+    `case.needle_inventory` is a list of placed blocks, each with `block_id`,
+    `role`, `subject`, `value`, `text`, `requested_depth`, `realised_depth`,
+    `document_index`, `token_offset` and `token_count`. Alongside it,
+    `case.realised_depth` and `case.filler_tokens_used`.
+
+    Nothing in `to_record()` changed to produce this - `case_metadata` is
+    splatted, so the shape moved while the function did not. That is exactly the
+    drift J-005 found (three record shapes all declaring "1.0"), so the version
+    tracks the SHAPE, not the source line that emits it.
+
+    ALL THREE FIELDS ARE LEFT ABSENT on archived records, and the reason is
+    worth stating because the alternative is tempting. NIAH's generator is
+    deterministic, so an inventory for an archived 1.4 record could be
+    reconstructed exactly from `needle`, `target_tokens` and `depth`. It is not,
+    for two reasons: a migration is a pure function of the record (enforced by
+    test - D-015), and reconstructing one would require reading needles.txt and
+    the 3.3 MB corpus, so the same record would migrate differently depending on
+    when it ran. Absent is honest; invariant 8 applied to construction rather
+    than to labels.
+
+    A reader wanting inventories for archived cases should REBUILD them at
+    analysis time, where the corpus version is an explicit input rather than
+    whatever happened to be on disk.
+    """
+
+    migrated = dict(record)
+
+    migrated["schema_version"] = "1.5"
+
+    return migrated
+
+
 MIGRATIONS: dict[
     tuple[str, str],
     Migration,
@@ -171,6 +208,7 @@ MIGRATIONS: dict[
     ("1.1", "1.2"): _migrate_1_1_to_1_2,
     ("1.2", "1.3"): _migrate_1_2_to_1_3,
     ("1.3", "1.4"): _migrate_1_3_to_1_4,
+    ("1.4", "1.5"): _migrate_1_4_to_1_5,
 }
 
 

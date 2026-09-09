@@ -2152,3 +2152,347 @@ rather than at the caller, which is why it read as an Ollama problem.
 
 **Disposition.** limitation — corrects §2.7, which claims three limits and
 missed this one.
+
+---
+
+## J-029 — The repudiation guard does not transfer to the new needle families
+Status: open
+
+**Observed.** Reviewing the multi-insert design before building
+`NIAH_distractor`, the D-011 repudiation guard was tested against the phrasing
+the new family will actually produce:
+
+```
+score=1.0  'There is no access code for Brightwater in the text.  OMEGA-77...'
+score=0.0  'There is no important secret mentioned in the text. OMEGA-7732...'
+```
+
+The first is a refusal scored as a **success**.
+
+**Expected.** That a guard built to catch "quotes the code while denying it"
+would catch that shape regardless of the noun.
+
+**Mechanism.** Two of the guard's eight branches require the literal word
+**"secret"**:
+
+```
+  there \s is \s no \s (?:\w+\s){0,3}? secret
+| no \s (?:specific|explicit|important|actual) \s (?:\w+\s){0,2}? secret
+```
+
+NIAH's question asks for "the important secret", so every repudiation D-011
+harvested contained that word. The keyed families ask *"What is the access code
+for {subject}?"*, so the natural repudiation is "there is no access code
+for X" — which matches no branch. A later branch does cover
+`does not contain|mention|reveal|include` followed by `code`, but the
+`there is no …` shape, which is the most common one in the archive, does not.
+
+This is **J-013 reproduced in a new family before that family exists.** Last
+time the same defect over-reported accuracy by 5 points (16 of 330) and
+concentrated the error in the cell that mattered.
+
+**Validated.** Direct evaluation above; the regex branches quoted from
+`lexical.py:20-21`.
+
+**Implies.** Four things.
+
+1. **`NIAH_distractor` and `NIAH_multihop` will ship with a known-optimistic
+   `lexical_exact_match`.** That must be stated in the D entry and in the first
+   run's write-up, not discovered afterwards.
+2. **Do not widen the guard speculatively.** D-011 is explicit that it is
+   deliberately narrow and that every pattern came from an *observed* response,
+   because a false negative reads as a model failure and gets written up as
+   one. The correct sequence is: run, harvest the real phrasings from the
+   failure corpus, then extend under a bumped `RULE_VERSION`.
+3. **`LexicalEvaluator` has no `RULE_VERSION` at all** — D-014's complaint,
+   still unpaid. The new families would inherit that defect on day one: three
+   definitions already share two names in the archive and nothing says which
+   produced a given value. `instruction_compliance` was born with a version
+   for exactly this reason; lexical should get one in the same change.
+4. **Do not promote `lexical.py` to a shared module.** It is tempting, since
+   both new families need it. Promoting it would assert a generality this
+   finding disproves. Import it across from the NIAH package and record why.
+
+**Disposition.** limitation — a new entry under §1, since it bounds every
+accuracy figure the two new families produce until the guard is extended
+against real data.
+
+---
+
+## J-030 — Splicing tokens produces a non-canonical sequence: the served context is up to a token shorter than budgeted
+Status: open | Disposition: limitation
+
+Found while generalising `create_haystack` to k blocks (D-020 / the multi-insert
+primitive), by asking a question the refactor forced: `build_haystack` now knows
+how many tokens it assembled, so should `actual_tokens` come from that counter
+instead of re-counting the decoded text? Checking before swapping them found
+they disagree.
+
+**Observed.** `count_tokens(haystack.text)` and the length of the token list the
+generator actually assembled are not the same number.
+
+```
+delta (served - budgeted): {-1: 56, 0: 154}   # 210 cases, 5 targets x 7 depths x 6 needles
+
+depth   mismatched/total
+  0.0      0/30
+  0.1     10/30
+  0.25    11/30
+  0.5     13/30
+  0.75     8/30
+  0.9      6/30
+  1.0      8/30
+```
+
+Over a second grid (4 targets x 7 depths x 6 needles = 168) the count changed in
+45 cases and was preserved in 123. The delta is **never** anything but 0 or -1.
+
+**Expected.** That `decode(encode(x))` round-trips at the token level, so
+assembling a 4,000-token list and counting the decoded string would give 4,000.
+
+**Mechanism.** Partial. The general shape is certain: splicing token lists
+produces a sequence BPE would never emit for that text, because the splice
+creates a token boundary at a position the merge rules would not have chosen.
+Re-encoding the decoded text yields the canonical segmentation, which is never
+longer. Depth 0.0 is immune because the block goes at index 0 and there is no
+filler-to-marker boundary inside the body.
+
+The perturbation is **local**: at `t=4000, d=0.5` the re-encoded sequence has no
+divergence from the assembled one anywhere before the splice point. So this is a
+boundary effect, not a drift that accumulates.
+
+*What it is not.* First hypothesis was that the marker's leading `\n\n` merges
+with a preceding newline-terminated filler token. Tested directly, predicting
+per-case from the last filler token before the splice: **77 agree, 31 disagree**
+— it also fires on `' III'` and `'   '`. Recorded because it is a plausible
+guess that a later reader would otherwise repeat.
+
+**Validated.** The counts above are reproducible from
+`build_haystack` + `count_tokens` over the grid; the locality claim is a direct
+index-by-index comparison of the assembled and re-encoded sequences.
+
+**Implies.** Three things.
+
+1. **`actual_tokens` must keep coming from `count_tokens(haystack.text)`.** The
+   text is what is serialised into the prompt and served, so the text's
+   tokenization is the true count. Recording the assembled counter instead would
+   have overstated the served length by one token in **27%** of cases — a silent
+   change introduced by a refactor whose entire premise was byte-identity. This
+   is the concrete reason `Haystack` carries `total_tokens` as *inventory* and
+   the benchmark does not use it for `num_ctx`.
+
+2. **`target_tokens` is not achieved exactly, and the miss is depth-dependent.**
+   It is 0 or 1 token — 0.1% at `t=1000`, 0.0008% at `t=128000` — so it changes
+   no result here. It is recorded because "the x-axis is nominal" already has a
+   BLOCKING entry (§1.1) and this is a second, independent reason the number on
+   that axis is not the number the model saw. §1.1 dominates it by three orders
+   of magnitude.
+
+3. It does not affect `case_fingerprint`. The fingerprint hashes
+   `prompt_sha256`, computed from the final text, so it already addresses what
+   was served rather than what was budgeted.
+
+**Disposition.** limitation — filed as a MINOR under §1.1's umbrella rather than
+as a new top-level entry, since it is the same claim (nominal != served) at a
+much smaller magnitude.
+
+---
+
+## J-031 — The first failures the framework produced on purpose: multi-hop refuses to compose
+Status: open | Disposition: publishable
+
+**Observed.** The first `NIAH_multihop` run ever executed — `qwen3:0.6b`, 4,000
+tokens, depth 0.5, k ∈ {2,4,8}, 2 hops swept, 6 cases, no judge:
+
+```
+     context   lexical_exact_match  instruction_compliance
+       3,995                 0.500                 0.500
+       3,998                 0.750                 0.750
+```
+
+Two of six wrong. Both wrong answers are the **same shape**:
+
+```
+k=2  hop->Brightwater  expected=TRV-4417-QD
+  predicted: 'The access code for **Redmont** is not explicitly mentioned in the
+              provided text. However, based on the information give...'
+
+k=8  hop->Ashford      expected=MKP-8823-LN
+  predicted: 'None of the access codes listed in the text relate to Redmont.'
+```
+
+Neither response contains **any** planted value. Checked against the recorded
+`needle_inventory`: 0 of the k+1 codes present in the prompt appear in either
+response.
+
+**Expected.** Failures, eventually, at long context. Not at **4,000 tokens** —
+the length at which every NIAH metric in the entire archive is 1.0, on a model
+that J-027 measured as 100% compliant at 4k.
+
+**Mechanism.** The model resolves the pointer's *subject* and not its
+*referent*. Both responses report that Redmont has no code — which is true of
+the registry read literally, and is exactly what a single-hop lookup returns.
+The pointer sentence, `The access code for Redmont is the same as the access
+code for Brightwater.`, is present in the prompt; the model appears to find it,
+read "Redmont", search the registry for a Redmont entry, fail, and report the
+absence. The second hop is never taken.
+
+That is a **composition** failure, not a retrieval failure. It is the first
+failure mode in this project that is not about finding a thing.
+
+**Validated.** Directly, from the record: the inventory is stored per case, so
+"contains no planted value" is a substring search over a known list rather than
+a judgement. Reproducible from
+`results/raw/long_range_dependency_NIAH_multihop_qwen3_0.6b_354d0aa9cca9.jsonl`.
+
+Three things a bigger corpus must confirm before any of this is a result. n=6.
+The wrong answers are at k=2 and k=8 while k=4 is clean, so **the effect is not
+monotone in k** — at this n that is noise, and it is recorded now so a later
+monotone story cannot be told without accounting for it. Only two hop targets
+were swept. And only one depth.
+
+**Implies.** Four things.
+
+1. **J-003 is answerable for this family.** "No genuine retrieval failure has
+   been isolated from an instrument artefact" stands for NIAH. This is not
+   NIAH, and this failure is not an instrument artefact — the case is
+   well-formed, the answer is present, the inventory proves it, and the model
+   says the opposite.
+
+2. **The taxonomy's `NON_ANSWER` / `REFUSAL` split is the first thing that will
+   be exercised**, not `WRONG_ANSWER`. Both failures commit to a claim about
+   the text ("is not explicitly mentioned", "None of the access codes ... relate
+   to") rather than to a code. `niah.distractor_retrieval` fired **0 of 6** —
+   the label the distractor work was meant to make reachable is not what the
+   first failures look like. That is exactly why CLAUDE.md says derive the
+   taxonomy from observed failures rather than implement the hypothesis.
+
+3. **§1.18's hazard is real but did not fire here.** `lexical_exact_match`
+   scored both refusals **0.0**, correctly — not because the guard caught them,
+   but because neither response quotes a code, so plain containment fails on its
+   own. The guard is still blind to this family's phrasing; these two cases just
+   never reached it. A refusal that *quotes* the code would still score 1.0, and
+   that is the case to watch for.
+
+4. `instruction_compliance` scored 0.0 on both, so the two rules agree here and
+   the 2x2's off-diagonal cells are still unobserved.
+
+**Disposition.** publishable — this is the shape the KV cache piece had: a
+concrete failure, a mechanism, and evidence that would look different if the
+explanation were wrong. Do not write it up on n=6.
+
+---
+
+## J-032 — 50 multi-hop cases: a real failure corpus, and J-031's n=6 reading was wrong on one point
+Status: open | Disposition: publishable
+
+The corpus J-031 asked for. `qwen3:0.6b`, `NIAH_multihop`, 4,000 tokens,
+depth ∈ {0.1,0.3,0.5,0.7,0.9}, k ∈ {2,4,8}, hop swept over the registry, no
+judge. **50 cases, 16 retrieval failures.**
+
+**Observed.** Two failure modes, both diagnosable offline from the stored
+inventory:
+
+```
+    9  no code emitted        (e.g. "None of the access codes for Redmont
+                                     is mentioned in the provided text.")
+    7  returned a planted distractor
+```
+
+Three effects, in descending order of how much they survive scrutiny:
+
+```
+by pointer depth        by registry size k      by WHICH entry the pointer names
+  0.1   6/10 (60%)        k=2   1/10 (10%)        rank 0  Brightwater  2/15 (13%)
+  0.3   4/10 (40%)        k=4   9/20 (45%)        rank 1  Ashford      5/15 (33%)
+  0.5   2/10 (20%)        k=8   6/20 (30%)        rank 2  Kingsley     8/10 (80%)
+  0.7   1/10 (10%)                                rank 3  Stonegate    1/10 (10%)
+  0.9   3/10 (30%)
+```
+
+**The rank effect is not a position effect.** Kingsley fails **80% at k=4 and
+80% at k=8**, at realised depths of **0.685 and 0.314** respectively — same rank
+in the registry, wildly different position in the document:
+
+```
+  hop            k   rank  realised_depth  fails/n
+  Brightwater    8   0     0.0595          0/5 (0%)
+  Ashford        8   1     0.1893          2/5 (40%)
+  Kingsley       8   2     0.3137          4/5 (80%)
+  Stonegate      8   3     0.4380          0/5 (0%)
+  Kingsley       4   2     0.6853          4/5 (80%)
+```
+
+**Expected.** That failures would track pointer depth and registry size. Depth,
+yes. Size, non-monotonically. Rank was not predicted at all and is the largest
+effect in the run.
+
+**Mechanism.** Unknown, and **confounded by construction**. The registry is
+built in file order, so rank 2 is *always* Kingsley in this design. Three
+hypotheses the data cannot separate:
+
+1. a middle-of-registry effect — rank 0 and rank 3 are the endpoints and both
+   are easy, which is a primacy/recency signature;
+2. a property of the token `Kingsley` specifically;
+3. a property of its value `ZBF-2094-HW` — the only planted code beginning
+   with Z.
+
+Distinguishing them needs the registry order permuted so rank and subject vary
+independently. That is a small change and it is the next thing to run.
+
+**What is NOT supported.** The seven distractor returns look like an off-by-one
+— five of seven are at offset ±1 from the correct entry, and Kingsley→Stonegate
+(+1) is three of them. **This is roughly what chance predicts**: for a middle
+entry in a 4-entry registry, two of the three wrong choices are adjacent, so
+P(adjacent) ≈ 2/3 and 5/7 is unremarkable. Recorded so the pattern is not
+rediscovered later and mistaken for a law.
+
+**Validated.** Every classification is a substring search over the recorded
+`needle_inventory` — no model call, no judgement. Rebuildable from
+`results/raw/long_range_dependency_NIAH_multihop_qwen3_0.6b_54630557c081.jsonl`.
+
+**Implies.** Four things, one of which corrects J-031.
+
+1. **J-031 point 2 was wrong, and n was why.** It read "`niah.distractor_retrieval`
+   fired 0 of 6" as evidence that the label the distractor work targets is not
+   what failures look like. At n=50 it fires **7 of 16**. J-031 stands as
+   written — the observation was accurate for its six cases — but the inference
+   drawn from it does not, and this entry supersedes that point. *Six cases is
+   not a sample.*
+
+2. **The rule tier is now demonstrably worth building.** Both modes were
+   separated with a regex and a dict lookup over the stored inventory, offline,
+   at zero model cost. That is build-order step 4's entire argument, executed on
+   real data rather than asserted.
+
+3. **The corpus target is a third met.** 16 failures spanning 2 modes, against a
+   target of ≥50 spanning ≥3. A second model and the permuted-registry run are
+   the obvious next increments.
+
+4. **The 2x2 is no longer degenerate.** `instruction_compliance` and
+   `lexical_exact_match` come apart here, which 424 NIAH records never showed:
+
+   ```
+   retrieved  complied   n
+   True       True      34   correct + bare
+   False      True       5   WRONG + bare   <-- the cell J-022 found empty
+   False      False     11   wrong + prose
+   True       False      0   correct + prose
+   ```
+
+   Five bare, confidently-wrong codes. That cell is what makes the two metrics
+   independent rather than one being a proxy for the other, and it is exactly
+   the cell D-018 argued had to be *reachable* even though it was unobserved.
+   The compliance rate exceeds the retrieval rate at every depth:
+
+   ```
+   depth   retrieval  compliance
+     0.1     0.400      0.600
+     0.3     0.600      0.800
+     0.5     0.800      0.800
+     0.7     0.900      0.900
+     0.9     0.700      0.800
+   ```
+
+**Disposition.** publishable, jointly with J-031 — a mechanism, a graded curve,
+a confound stated rather than hidden, and a self-correction at larger n.

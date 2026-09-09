@@ -1417,4 +1417,246 @@ than one. If it degrades at the same rate, composition is not the binding
 constraint and the extra hop is measuring nothing — which would be a useful
 negative and would reopen the drop decision.
 
+**What we got.** Partially, and more strongly than predicted — but the
+prediction as stated is **still untested**, because only one context length has
+been run.
+
+At **4,000 tokens**, `NIAH_multihop` on `qwen3:0.6b` fails **16 of 50** (J-032).
+Every NIAH metric in the entire 590-record archive is 1.0 at that length. So the
+gap is not a difference in *slope*, which is what was predicted; it is a
+difference in *intercept*. Composition is binding at the shortest length in the
+grid, before context length has had a chance to do anything at all.
+
+That is a better outcome than the prediction and a worse basis for it: a slope
+claim needs the length sweep, and running it is now the point of the experiment
+rather than a confirmation of it. Whether the two curves diverge, converge or
+run parallel from a 32-point offset is open.
+
+Two things the run settled that this entry did not anticipate. The failures
+have **two distinct modes**, not one (9 non-answers, 7 planted-distractor
+returns), and both are separable offline from the stored inventory with a regex
+— which is build-order step 4's economic argument demonstrated rather than
+asserted. And the largest effect in the run is **which registry entry the
+pointer names** (80% failure at rank 2 versus 0–20% at ranks 0 and 3), an axis
+this decision did not know existed and which is confounded with subject identity
+by construction.
+
+The counting family remains unbuilt and its compliance-rule problem, noted
+above, remains unaddressed.
+
+---
+
+## D-021 — Extract a shared experiment pipeline rather than duplicating `run.py`
+Status: accepted
+Decided: 2026-09-09 | Trigger: the multi-insert plan, Risk 2 | Changes what is measured: no
+
+**The problem.** `NIAH_distractor` and `NIAH_multihop` need everything
+`experiments/long_range_dependency/NIAH/run.py` does. That file is 485 lines and
+is the single most heavily exercised path in the repo — every archived record
+came out of it, and it carries R-002's two-phase split, invariant 2's memory
+preflight, invariant 3's judge pinning, the KV probe ordering, and the
+self-judging warning. None of that is NIAH-specific and all of it is
+load-bearing.
+
+Counted precisely, **exactly three things in it are NIAH-specific**:
+
+1. the evaluator list (`LexicalEvaluator` is family-specific per §1.18;
+   `InstructionComplianceEvaluator` and `OllamaJudge` are not),
+2. `NiahParams(**config.experiment_params)` and the `NiahBenchmark(...)`
+   construction that follows it,
+3. two module constants, `FILLER_PATH` and `NEEDLES_PATH`, which are **already
+   dead** — `NiahParams` supplies both paths and nothing reads the constants.
+
+**Options.**
+
+*A — Copy `run.py` twice.* Costs nothing today and is the fastest route to a
+runnable experiment. Guarantees drift: the next fix to the KV probe ordering or
+the two-phase split lands in one copy of three. R-002 and invariant 3 exist
+because that ordering was got wrong once already, at the cost of a production
+failure; three copies is three chances to regress it independently, in a file
+whose correctness is invisible from reading it.
+
+*B — Flag on the existing NIAH runner.* `--distractors k`. Smallest diff. Also
+pools three different measurements under one `run.experiment` value, so a record
+cannot say which task produced it without reading a parameter. The distractor
+arm is **not** comparable with NIAH (§1.9 wording, different question, different
+system prompt, discrimination rather than retrieval), so a shape that invites
+pooling is a measurement-validity hazard, not a convenience.
+
+*C — Extract `experiments/pipeline.py`, family plugs stay per-experiment.* The
+generic runner takes a callable that returns cases, evaluators and the skipped
+list; each experiment keeps a ~40-line `run.py` supplying only its three
+specifics. One copy of the ordering. Costs a refactor of the one path
+everything depends on.
+
+**Decision.** C. The deciding reason is not deduplication — it is that the
+ordering in `_run_niah` is *knowledge*, earned from two production failures, and
+knowledge that exists in three copies is knowledge that will be wrong in two of
+them. Option A's cost is not the duplicated lines, it is that the next person to
+fix the runner has no way to know there are two other files to fix.
+
+The refactor risk is real and is bounded by an existing guard: the byte-identity
+test plus the 166-record fingerprint replay means a pipeline that changes what
+NIAH produces fails before it is committed. That test was written for the
+generator refactor and pays for itself a second time here.
+
+`pipeline.py` goes at `experiments/pipeline.py`, **not** under a family — a
+shared pipeline living inside `long_range_dependency/` would be a scope
+violation of the same kind CLAUDE.md's "resist hardcoding NIAH assumptions into
+`core/`" forbids, one directory down.
+
+**Rejected.**
+- *A, copy twice.* `Revisit if:` the two new families turn out to need a
+  materially different ordering — in which case the divergence is real and
+  should be explicit, not emergent.
+- *B, a flag.* `Revisit if:` never on these grounds. A pooling hazard does not
+  become acceptable with time. A flag would be fine for a knob that does not
+  change the task, which `k` does.
+
+**Predicted.** NIAH's output is byte-identical after the extraction — same three
+haystack digests, same 166 fingerprints, same `668cb822…` for
+`niah/t4000/d0.00/n06bfb731/marked/g0`. Each new experiment's `run.py` lands
+under 60 lines. The dead `FILLER_PATH`/`NEEDLES_PATH` constants go with it,
+since removing a second source of truth for a measured path is part of this
+change rather than a drive-by.
+
+**What we got.** Byte-identity held on every leg. The three digests reproduce,
+the 166-record replay passes, `668cb822…` reproduces exactly, and — the strongest
+check, because it exercises the generator refactor *and* the extraction together
+— a **live 2-case run joined the archive on `case_fingerprint`, 2 of 2**, against
+records generated by the pre-refactor code.
+
+`run.py` came in at 119 lines rather than under 60. The prediction was wrong
+because it counted only the plug wiring and forgot that `_build_evaluators`
+carries the self-judging warning and D-019's retention note, which are family
+knowledge and belong in the family file. 485 → 119 is the real number.
+
+One thing the prediction missed entirely, found only by running it. The file
+handler was attached to the NIAH runner's **own** module logger. After the
+extraction the pipeline's messages and the family's messages live on *sibling*
+loggers, so the self-judging warning — the one LIMITATIONS §1.2 depends on being
+visible — would have been written to no file at all. Silently: nothing errors
+when a log record has no handler.
+
+Fixed by attaching to the `probebench` package logger, which is what a run log
+should always have captured; the previous scoping also meant `runner.py`,
+`ollama.py` and `preflight.py` never appeared in a `.log` file. **Generalisable
+lesson: extracting a module splits a logger hierarchy, and the failure mode is
+silence rather than an error.** Verified in the dry run — the warning now appears
+under `…NIAH.run` in a log whose other lines are `…pipeline`.
+
+The dead constants went, as predicted.
+
+---
+
+## D-022 — Uniform needle wording in the keyed families, and the comparability it costs
+Status: accepted
+Decided: 2026-09-09 | Trigger: §1.9, D-020 | Changes what is measured: **yes**
+
+**The problem.** The distractor experiment asks a model to pick one code out of
+k+1 present. For a wrong answer to *mean* "failed to discriminate", the decoys
+have to be equally findable. NIAH's six needles are not: §1.9 measured a
+**19-point** accuracy spread across their wording alone, larger than any context
+effect in that run. Reusing them would confound "returned a decoy" with "that
+decoy's sentence was easier".
+
+**Options.**
+
+*A — Reuse `needles.txt`.* Free, and keeps the arm on the same footing as NIAH.
+Makes every distractor result uninterpretable for the reason above.
+
+*B — One template, k+1 subjects.*
+`The access code for {subject} is {value}.`, asked as
+`What is the access code for {subject}?`. Only the subject varies, so a wrong
+answer equal to a planted code is **necessarily** a discrimination failure.
+
+*C — Reuse the needles but balance them across slots.* Randomise which needle is
+the target so wording averages out across the grid. Preserves comparability with
+NIAH and needs no new data file. Costs repeats we do not have — §1.4, one
+Bernoulli sample per cell — so the averaging is nominal, and it makes each
+individual case uninterpretable even though the aggregate is fair.
+
+**Decision.** B. C is the interesting rejection: it is *statistically* the right
+answer and is unavailable to us, because balancing requires repeats and §1.4
+says we have none. Choosing B is choosing a clean per-case interpretation over
+an aggregate fairness we cannot currently purchase.
+
+⚠️ **This changes what is measured, and the change does not stay inside the new
+experiment.** Uniform wording deletes the §1.9 variable *by construction*, so
+**`NIAH_distractor` accuracy is not comparable with `NIAH` accuracy** — not
+"approximately comparable", not "comparable with a caveat". Four independent
+reasons stack: different needle wording, different question, different system
+prompt, and discrimination rather than retrieval. Any figure putting the two on
+one axis is wrong.
+
+The k=0 cell is what makes this recoverable. Running the keyed family at k=0 is
+NIAH's task with NIAH's structure and *only* the wording changed, so the
+NIAH-to-keyed delta becomes a measured quantity rather than an assumed one.
+That is the whole reason k=0 is in the grid and not treated as a degenerate
+case.
+
+The inventory carries `value` explicitly rather than re-parsing it.
+`extract_expected_answer` splits on `" is "`, which happens to work on a keyed
+needle and returns `'the one recorded for the north tower'` for a multi-hop
+pointer. It exists for the legacy needle file and the new families should be
+free of it.
+
+**Rejected.**
+- *A.* `Revisit if:` never — it is the confound the experiment exists to avoid.
+- *C, balancing.* `Revisit if:` §1.4 is closed and runs carry repeats. Then
+  balancing across slots becomes affordable and would give both a clean
+  aggregate *and* comparability with NIAH, which B cannot.
+
+**Predicted.** A wrong answer in the distractor arm is a planted value in a
+majority of failure cases, rather than a fabrication. If most wrong answers turn
+out to be *absent* from the prompt entirely, the uniform template has made the
+task harder in a way not intended, and B needs revisiting.
+
+**What we got.** not yet.
+
+---
+
+## D-023 — Build `NIAH_distractor` before `NIAH_multihop`, reversing D-020's order
+Status: accepted
+Decided: 2026-09-09 | Trigger: D-020, D-022 | Changes what is measured: no
+
+**The problem.** D-020 decided to build both, multi-hop first, on the grounds
+that its control (J-024) already produced a diagnosable failure — the one wrong
+answer returned a decoy — while counting produced none. D-022 introduces a
+dependency that argument did not account for.
+
+**Options.**
+
+*A — Multi-hop first, per D-020.* Honours the existing decision. Its first
+results arrive without any measurement of what the uniform-wording change did,
+so a multi-hop failure rate cannot be separated from the keyed-template effect.
+
+*B — Distractor first.* Its **k=0 cell is the calibration** for D-022: NIAH's
+task, NIAH's structure, uniform wording, nothing else changed. Running it first
+turns "how much did the template change accuracy?" from an assumption into a
+number, and multi-hop then inherits a measured baseline instead of an unmeasured
+one. Multi-hop also *contains* the distractor mechanism — its registry blocks
+are decoys — so building distractor first builds most of multi-hop.
+
+**Decision.** B. D-020's reasoning is not overturned: multi-hop is still the
+more diagnostically valuable experiment, and that is still why both are being
+built. What changed is that D-022 created a calibration that only the distractor
+family's k=0 cell can supply, and running multi-hop before it would spend the
+compute and then need the baseline anyway.
+
+Recorded as a separate entry rather than an edit to D-020, because D-020's
+ordering was correct given what was known when it was made. The file records
+what was believed at the time; that is the part that makes it worth keeping.
+
+**Rejected.**
+- *A.* `Revisit if:` the k=0 calibration turns out to be unnecessary — i.e. if
+  the keyed-vs-legacy delta measures near zero, in which case ordering stops
+  mattering and D-020's original ranking should govern.
+
+**Predicted.** k=0 keyed accuracy lands within a few points of NIAH accuracy at
+the same target tokens, because both are single-needle retrieval and the marker
+is unchanged. A large gap would mean the wording change dominates, which would
+make **every** cross-arm comparison in both new families unreportable and is the
+single most important number to get early.
+
 **What we got.** not yet.

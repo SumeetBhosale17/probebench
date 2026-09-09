@@ -1,18 +1,18 @@
-"""NIAH's three family-specific pieces. Everything else is in the pipeline.
+"""The keyed distractor experiment's three family-specific pieces.
 
-Collapsed from 485 lines to this when D-021 extracted `experiments/pipeline.py`.
-What remains is exactly what a second experiment would have to differ on: which
-cases, which evaluators. The `FILLER_PATH` / `NEEDLES_PATH` module constants
-went with the extraction - `NiahParams` had already become the source of truth
-for both paths and nothing read them, so they were a second, stale copy of a
-measured value.
+Everything else - the KV probe ordering, the memory preflight, the two-phase
+split - is in `experiments/pipeline.py` (D-021). This file is what differs.
 """
 
 import logging
 from pathlib import Path
 
-from probebench.benchmarks.long_range_dependency.NIAH.benchmark import NiahBenchmark
-from probebench.benchmarks.long_range_dependency.NIAH.settings import NiahParams
+from probebench.benchmarks.long_range_dependency.NIAH_distractor.benchmark import (
+    NiahDistractorBenchmark,
+)
+from probebench.benchmarks.long_range_dependency.NIAH_distractor.settings import (
+    NiahDistractorParams,
+)
 from probebench.core.config import RunConfig
 from probebench.core.evaluator import Evaluator
 from probebench.core.tokenizer import Tokenizer
@@ -31,15 +31,13 @@ def _build_cases(
     tokenizer: Tokenizer,
     max_context_tokens: int | None,
 ) -> CaseBundle:
-    # Validated here rather than in core/: the benchmark owns these knobs, so a
-    # typo in one of them raises in the package that knows what they mean.
-    params = NiahParams(**config.experiment_params)
+    params = NiahDistractorParams(**config.experiment_params)
 
-    benchmark = NiahBenchmark(
+    benchmark = NiahDistractorBenchmark(
         filler_path=params.filler_path,
         needles_path=params.needles_path,
-        question=params.question,
         system_prompt=params.system_prompt,
+        distractor_counts=params.distractor_counts,
         tokenizer=tokenizer,
         target_tokens=config.sweep.target_tokens,
         depths=config.sweep.depths,
@@ -57,30 +55,25 @@ def _build_cases(
 
 def _build_evaluators(config: RunConfig) -> list[Evaluator]:
     evaluators: list[Evaluator] = [
+        # ⚠️ KNOWN-OPTIMISTIC HERE. LexicalEvaluator's repudiation guard needs
+        # the literal word "secret" in two of its eight branches, because every
+        # phrasing D-011 harvested came from NIAH's question. This family asks
+        # "What is the access code for {subject}?", so its natural refusal -
+        # "There is no access code for Brightwater in the text" - matches no
+        # branch and scores 1.0 (J-029, LIMITATIONS 1.18). First-run retrieval
+        # figures from this experiment are UPPER BOUNDS and must be reported as
+        # such. The fix is to harvest real phrasings from this corpus and then
+        # extend the guard - never to widen it speculatively, which is what
+        # D-011 forbids.
         LexicalEvaluator(),
-        # Rules before models (invariant 9). Compliance is a syntactic property
-        # of a string already in hand, so it is decided offline and for free -
-        # and deliberately NOT gated behind --judge or --embedding, because a
-        # metric that only exists when a judge was configured could not be
-        # replayed over the archive.
+        # Rules before models (invariant 9). The answer space is a single token
+        # here as in NIAH, so the rule applies unchanged.
         InstructionComplianceEvaluator(),
     ]
-
-    # semantic_similarity was dropped from NIAH in D-019. J-022 showed it was
-    # not a weak correctness signal but a near-perfect detector of response
-    # FORM (min 0.9918 bare vs max 0.7977 prose, zero overlap over 424
-    # records) - the same property InstructionComplianceEvaluator now decides
-    # exactly, offline, with a recorded rule version. The class is retained for
-    # future families whose expected answers are prose.
 
     if config.judge.enabled:
         judge_model = config.resolved_judge_model()
 
-        # Self-judging is LIMITATIONS 1.2. J-006 showed it is not a mild bias:
-        # qwen3:0.6b grading its own correct answers returned 0.0 with reasons
-        # that named the expected string in the clause calling it missing.
-        # Warn rather than refuse - a self-judged run is a legitimate thing to
-        # ask for, it is just not a reportable one.
         if judge_model == config.generation_model:
             logger.warning(
                 "Judge model %s IS the generation model: this run is "
@@ -104,16 +97,14 @@ def _build_evaluators(config: RunConfig) -> list[Evaluator]:
     return evaluators
 
 
-NIAH_PLUG = ExperimentPlug(
+NIAH_DISTRACTOR_PLUG = ExperimentPlug(
     build_cases=_build_cases,
     build_evaluators=_build_evaluators,
-    # NIAH stopped scoring with embeddings in D-019, but the model is still
-    # ensured present: the corpus-similarity analysis embeds needles and filler
-    # windows offline, and a missing model should fail at startup rather than
-    # halfway through an analysis.
-    needs_embedding_model=True,
+    # No embedding model is needed: D-019 dropped semantic scoring, and unlike
+    # NIAH this family has no offline corpus-similarity analysis pending.
+    needs_embedding_model=False,
 )
 
 
-def run_niah(config: RunConfig) -> Path:
-    return run_experiment(config, NIAH_PLUG)
+def run_niah_distractor(config: RunConfig) -> Path:
+    return run_experiment(config, NIAH_DISTRACTOR_PLUG)

@@ -486,6 +486,110 @@ check of whether `thinking_chars` correlates with compliance. Until both, no
 cross-family compliance claim is supportable.
 
 
+### 1.18 The repudiation guard is NIAH-specific; new families inherit J-013 — MAJOR
+
+`lexical_exact_match` pairs containment with a repudiation guard (D-011). Two
+of its eight branches require the literal word **"secret"**, because every
+repudiation D-011 harvested came from NIAH's question, *"What is the important
+secret mentioned in the text?"*
+
+The keyed families ask *"What is the access code for {subject}?"*, so the
+natural refusal is "There is no access code for Brightwater in the text."
+That matches no branch and **scores 1.0** (J-029) — a refusal counted as a
+success, which is J-013 exactly, reproduced before the family exists. Last time
+that defect over-reported accuracy by 5 points and concentrated the error in
+the cell that mattered.
+
+Consequence: `NIAH_distractor` and `NIAH_multihop` ship with a
+**known-optimistic** `lexical_exact_match`. Their first-run retrieval figures
+are upper bounds and must be reported as such.
+
+Fix, in this order and no other: run, harvest the actual repudiation phrasings
+from the resulting corpus, extend the guard, bump a `RULE_VERSION`. Widening it
+speculatively is what D-011 forbids — a false negative reads as a model failure
+and gets written up as one.
+
+Two related debts this exposes. `LexicalEvaluator` has **no `RULE_VERSION`**
+(D-014), so the new families inherit an unversioned rule on day one;
+`instruction_compliance` was born with one precisely to avoid this. And
+`lexical.py` must **not** be promoted to a family-shared module — it is
+tempting because both new families need it, but J-029 disproves the generality
+that promotion would assert.
+
+Removal condition: the guard is versioned, and its patterns are derived from
+observed responses in each family that uses it.
+
+
+### 1.19 The spliced haystack is one token shorter than budgeted, depth-dependently — MINOR
+
+A subsidiary of §1.1, filed separately because it has a different mechanism and
+a different fix.
+
+Splicing a needle into a token list produces a sequence BPE would never emit for
+that text — the splice puts a boundary where the merge rules would not. When the
+list is decoded to the string that actually gets served, re-encoding it yields
+the canonical segmentation, which is **never longer**. Measured over 210 cases
+(J-030), the served count is one token below the assembled count in 56 of them
+and equal in 154; it is never off by more than one.
+
+The miss is depth-dependent — 0/30 at depth 0.0, 13/30 at depth 0.5 — because
+depth 0.0 has no filler-to-marker boundary inside the body.
+
+Consequence: `target_tokens` is a request, not an achieved value, and two cells
+of the grid miss it at different rates. **Magnitude: 0.1% at `t=1000`, 0.0008%
+at `t=128000`.** §1.1 dominates this by roughly three orders of magnitude, so no
+current result changes. It is recorded because it is a *second, independent*
+reason the x-axis is nominal, and because it is invisible from the code — the
+generator counts what it assembled, not what it serves.
+
+What it does **not** affect: `case_fingerprint` hashes `prompt_sha256`, which is
+computed from the final text, so identity already addresses what was served.
+
+Guarded rather than fixed. `NiahBenchmark` derives `actual_tokens` and hence
+`num_ctx` from `count_tokens(haystack.text)`, never from `Haystack.total_tokens`
+— using the assembled counter would overstate the served length in 27% of cases.
+The two fields are deliberately both present and deliberately not
+interchangeable.
+
+Removal condition: not worth removing at this magnitude. It would be closed as a
+side effect of fixing §1.1, since a per-model tokenizer path has to re-encode
+the served text anyway. If a future family needs exact token budgets, the fix is
+to re-encode after splicing and top the body up to the target.
+
+
+### 1.20 The three long-range families are not comparable with each other — MAJOR
+
+`NIAH`, `NIAH_distractor` and `NIAH_multihop` all report
+`lexical_exact_match` and `instruction_compliance`, on the same corpus, at the
+same target token counts, with the same marker. **None of those numbers may be
+placed on a shared axis.** The similarity of the output is the hazard: nothing
+in a record stops someone plotting all three as one accuracy-vs-length curve,
+and the result would be meaningless.
+
+Four independent differences, each sufficient on its own:
+
+| | NIAH | NIAH_distractor | NIAH_multihop |
+|---|---|---|---|
+| Needle wording | six needles spanning **19 points** (§1.9) | one uniform template (D-022) | one uniform template |
+| Question | "the important secret" | "the access code for {subject}" | "the access code for {pointer}" |
+| System prompt | one code present | several codes present | several codes, some shared |
+| Task | retrieval | **discrimination** | **composition** |
+
+The k=0 cell of `NIAH_distractor` is the one bridge, and it bridges exactly one
+of the four: it is NIAH's structure with only the wording changed, so the
+NIAH-to-keyed delta is measurable (D-023). It does **not** license comparing
+NIAH with k=4, or with multi-hop at any k.
+
+Consequence for the paper: every cross-family figure must either be faceted by
+experiment or state which of the four differences it is holding fixed. A
+"context length vs. accuracy" plot pooling the three is wrong even though every
+point in it is individually correct.
+
+Removal condition: none — this is a property of the design, not a defect. It is
+recorded because the failure mode is *reading*, not measurement, and the records
+make the mistake easy. The reporting layer (§5.1) must refuse to pool distinct
+`run.experiment` values when it is resurrected.
+
 ---
 
 ## 2. Memory model limitations

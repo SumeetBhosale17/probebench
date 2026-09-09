@@ -11,8 +11,15 @@ from pathlib import Path
 
 from probebench.core.config import RunConfig
 from probebench.experiments.long_range_dependency.NIAH.run import run_niah
+from probebench.experiments.long_range_dependency.NIAH_distractor.run import (
+    run_niah_distractor,
+)
+from probebench.experiments.long_range_dependency.NIAH_multihop.run import (
+    run_niah_multihop,
+)
 
 NIAH_DATA_DIR = "data/long_range_dependency/NIAH"
+NIAH_DISTRACTOR_DATA_DIR = "data/long_range_dependency/NIAH_distractor"
 
 
 @dataclass(frozen=True)
@@ -51,6 +58,34 @@ EXPERIMENTS: tuple[ExperimentSpec, ...] = (
         data_files=(
             f"{NIAH_DATA_DIR}/filler_text.txt",
             f"{NIAH_DATA_DIR}/needles.txt",
+        ),
+        uses_context_sweep=True,
+    ),
+    ExperimentSpec(
+        family="long_range_dependency",
+        name="NIAH_distractor",
+        description=(
+            "Keyed discrimination: k decoy codes plus one target, ask for one of them. "
+            "NOT comparable with NIAH - see D-022."
+        ),
+        runner=run_niah_distractor,
+        data_files=(
+            f"{NIAH_DATA_DIR}/filler_text.txt",
+            f"{NIAH_DISTRACTOR_DATA_DIR}/keyed_needles.jsonl",
+        ),
+        uses_context_sweep=True,
+    ),
+    ExperimentSpec(
+        family="long_range_dependency",
+        name="NIAH_multihop",
+        description=(
+            "Two-hop resolution: a pointer names a location, a registry holds the codes. "
+            "NOT comparable with NIAH or NIAH_distractor."
+        ),
+        runner=run_niah_multihop,
+        data_files=(
+            f"{NIAH_DATA_DIR}/filler_text.txt",
+            f"{NIAH_DISTRACTOR_DATA_DIR}/keyed_needles.jsonl",
         ),
         uses_context_sweep=True,
     ),

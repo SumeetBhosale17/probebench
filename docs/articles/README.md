@@ -15,6 +15,7 @@ is a visible action on someone's account and gets confirmed separately.
 | *(published by Sumeet)* — the KV cache allocation crash | incident → arithmetic → preflight | J-001, R-001 |
 | [the-flag-that-configured-nothing.md](the-flag-that-configured-nothing.md) | a flag that never took effect → why the obvious fix was wrong → measuring the server instead | J-016, J-018, D-017 |
 | [the-benchmark-was-the-bug.md](the-benchmark-was-the-bug.md) | 70 failures, of which most were caused by our own test design | J-011, J-012, J-013, J-014 |
+| [the-second-hop.md](the-second-hop.md) | a benchmark that could not fail → one changed sentence → 16/50 failures at the easiest setting, and a conclusion overturned at larger n | J-031, J-032, D-020 |
 
 ## Queued, with the evidence already in hand
 
@@ -39,8 +40,15 @@ The template is the KV cache piece, and it is four beats:
 
 What it is *not*: a results announcement, a feature list, or a claim the
 record does not support. If a finding is still open, the article says so.
-J-003 stands — no genuine retrieval failure has been isolated from an
-instrument artefact yet — so no piece may claim we have found model failures.
+
+**Updated 2026-09-09.** J-003 no longer bars every failure claim. It still
+stands **for NIAH** — no genuine single-needle retrieval failure has been
+isolated from an instrument artefact — so no piece may say we have found NIAH
+retrieval failures. `NIAH_multihop` is different: 16 of 50 cases fail at 4k with
+two separable modes (J-032), verified against the stored inventory rather than
+inferred. A piece may report those, and must state that they are one model, one
+context length, unreplicated, and that the largest effect in the run is
+confounded with subject identity by construction.
 
 Length 1,200–1,800 words. Show real output, including the ugly bits. Name the
 wrong turn: every piece here is stronger for the paragraph where we were

@@ -238,8 +238,13 @@ ProbeBench result file.
 | Failure isolation, retries, health checks | **built** | `core/{runner,retry,health}.py` |
 | Two-phase execution, judge context pinning | **built** | `core/runner.py`, `evaluation/.../judge/` |
 | Structured provenance per case | **built** | `core/result.py` |
-| Schema migration path | **built** | `core/migrations.py` — 1.0→1.1→1.2→1.3, tested over the whole archive; J-005's three-shapes debt unpaid |
-| Case identity (`case_key`, `case_fingerprint`) | **built** | `core/case_identity.py`, `benchmarks/.../NIAH/identity.py` (D-012, D-015) |
+| Schema migration path | **built** | `core/migrations.py` — 1.0→…→1.5, tested over the whole archive; J-005's three-shapes debt unpaid |
+| Multi-block haystack primitive | **built** | `benchmarks/long_range_dependency/haystack.py` — k blocks at k depths, full inventory; single-needle path byte-identical (166 fingerprints replay) |
+| Needle inventory in the record | **built** | schema 1.5 — `needle_inventory`, `realised_depth`, `filler_tokens_used`. This is what makes the rule tier affordable |
+| Shared experiment pipeline | **built** | `experiments/pipeline.py` (D-021) — the KV-probe/preflight/two-phase ordering exists once |
+| `NIAH_distractor` (keyed discrimination) | **built, unrun** | k ∈ {0,1,2,4,8} decoys (D-022, D-023); k=0 is the calibration cell |
+| `NIAH_multihop` (two-hop composition) | **built, first run done** | Produced the project's first deliberate failures (J-031) |
+| Case identity (`case_key`, `case_fingerprint`) | **built** | `core/case_identity.py`, plus one `identity.py` per family (D-012, D-015) |
 | Hardware provenance per run | **built** | `core/hostinfo.py` (D-013); null when Ollama is remote |
 | KV precision measured, not assumed | **built** | `core/kvprobe.py` (D-017); a mismatched run refuses to start |
 | Layered config (`probebench.toml`) | **built** | `core/settings.py` (D-016); measured/operational split is a type error |
@@ -536,8 +541,22 @@ those files join on `case_key` only.
 no discriminating power. That is false, and what falsifies it was in the
 archive the whole time.
 
-**Retrieval** is still near-saturated on qwen3 runs, and J-003 stands: no
-genuine retrieval failure has been isolated from an instrument artefact.
+**Retrieval** is still near-saturated on qwen3 NIAH runs, and J-003 stands **for
+NIAH**: no genuine NIAH retrieval failure has been isolated from an instrument
+artefact.
+
+**It does not stand for multi-hop.** The first `NIAH_multihop` run produced two
+failures in six cases at **4,000 tokens** — the length at which every NIAH metric
+in the archive is 1.0 (J-031). Both are the same mode, and it is one the archive
+has never contained: the model resolves the pointer's *subject* and not its
+*referent*, reports that the pointed-from location has no code, and never takes
+the second hop. A composition failure, not a retrieval failure. Verified against
+the stored inventory: neither response contains any of the k+1 planted codes.
+
+`niah.distractor_retrieval` fired **0 of 6**. The label the distractor work was
+meant to make reachable is not what the first failures look like — which is
+precisely why the taxonomy is derived from an observed inventory rather than
+implemented from the hypothesis below.
 
 **Instruction-following is not.** `instruction_compliance` (D-018) fires on
 360 of 424 archived responses, and on `qwen3:0.6b` it produces the project's
@@ -564,7 +583,9 @@ against.
 These must all hold before any claim that the taxonomy works:
 
 - A corpus with a non-trivial failure rate — target ≥50 failing cases
-  spanning ≥3 distinct failure modes.
+  spanning ≥3 distinct failure modes. **16 of 50, spanning 2 modes, as of
+  J-032** — the first real progress on this line, all of it from
+  `NIAH_multihop` at 4k.
 - Hand-labelled ground truth on a sample (n ≈ 100), so per-label precision
   and recall are measurable. Someone has to read 100 responses.
 - Rule-tier vs. LLM-tier disagreement rate reported; ideally a second human
@@ -770,9 +791,13 @@ src/probebench/
     migrations.py
     taxonomy.py        # (planned) FailureLabel, TAXONOMY_VERSION, subtypes
     classification.py  # (planned) Classification, Classifier, ClassifierChain
-  benchmarks/<family>/<EXPT>/      # case generation
+  benchmarks/<family>/haystack.py  # k-block splice primitive + inventory
+  benchmarks/<family>/<EXPT>/      # case generation (NIAH, NIAH_distractor,
+                                   #   NIAH_multihop)
   evaluation/<family>/<EXPT>/      # evaluators (lexical, semantic, judge)
   classification/<family>/<EXPT>/  # (planned) family rule sets
+  experiments/pipeline.py          # the generic run: probe -> cases -> plan ->
+                                   #   generate -> evaluate -> write (D-021)
   experiments/registry.py          # ExperimentSpec registry — add new here
   experiments/<family>/<EXPT>/run.py  # orchestration
   models/        # Ollama client, registry, installer, host resolution
@@ -827,17 +852,23 @@ Reordered around the pivot. Items 1–3 come before the tokenizer fix because
 each is either a precondition for it being measurable or a precondition for
 having anything to diagnose.
 
-1. **No failures exist (JOURNAL J-003).** Every metric in every successful
-   run is 1.0, so the benchmark has no discriminating power and the taxonomy
-   is untestable. Longer contexts, weaker models, and distractor needles.
+1. **Grow the multi-hop failure corpus (JOURNAL J-031).** The mechanism is
+   built and it produces failures at 4k. What is missing is *n*: the target is
+   ≥50 failing cases spanning ≥3 modes, and the first run has 2 spanning 1. Run
+   the depth × k × hop grid, then a second model, then hand-label a sample.
+   **This is now the shortest path to a testable taxonomy**, and it is ahead of
+   the distractor family because it is where failures actually appeared.
 
-2. **Case identity is not stable across runs (JOURNAL J-004).** `case_id`
-   depends on sweep composition, so cross-model joins are unsound. Blocks
-   the "do different models fail on the same inputs?" question entirely.
+2. **Run `NIAH_distractor` at all, starting with k=0.** It is built and has
+   never been executed. The k=0 cell is D-023's calibration — until it runs,
+   the keyed-vs-legacy wording delta is an assumption, and every cross-arm
+   figure in both new families depends on it.
 
-3. **Result schema drift (LIMITATIONS §5.2, JOURNAL J-005).** Three record
-   shapes all declare `"1.0"`. Every run archived until this is fixed adds
-   to the mess.
+3. **The repudiation guard is blind to the new families (§1.18, J-029).** Both
+   keyed families ship a **known-optimistic** `lexical_exact_match`. J-031's two
+   refusals happened to score 0.0 because they quote no code — a refusal that
+   *quotes* one would score 1.0. Harvest phrasings from the corpus item 1
+   produces, then extend the guard and version it.
 
 4. **Tokenizer mismatch (LIMITATIONS §1.1, BLOCKING).** Haystacks are built
    with `tiktoken cl100k_base` but served to models with different

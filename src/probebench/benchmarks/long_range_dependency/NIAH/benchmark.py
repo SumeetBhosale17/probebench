@@ -1,9 +1,12 @@
 import logging
 import math
+from dataclasses import asdict
 
 from probebench.benchmarks.long_range_dependency.NIAH.generator import (
+    Block,
+    EncodedFiller,
+    build_haystack,
     count_tokens,
-    create_haystack,
     extract_expected_answer,
     load_filler,
     load_needles,
@@ -106,7 +109,13 @@ class NiahBenchmark:
         filler = load_filler(self.filler_path)
         needles = load_needles(self.needles_path)
 
-        self.filler_sha256 = sha256_text(filler)
+        # Encoded ONCE for the whole sweep. The old path re-encoded the 3.3 MB
+        # corpus inside the triple loop - 330 times in one archived run - which
+        # dominated case generation. EncodedFiller carries the digest with the
+        # tokens so the two cannot drift apart.
+        encoded_filler = EncodedFiller.encode(filler, self.tokenizer)
+
+        self.filler_sha256 = encoded_filler.sha256
         self.needles_sha256 = sha256_text("\n".join(needles))
 
         selected_needles = needles[: self.needles_per_configuration]
@@ -120,13 +129,29 @@ class NiahBenchmark:
         for target_tokens in self.target_tokens:
             for depth in self.depths:
                 for needle in selected_needles:
-                    context = create_haystack(
-                        filler=filler,
-                        needle=needle,
+                    haystack = build_haystack(
+                        filler=encoded_filler,
+                        blocks=[
+                            Block(
+                                block_id="target",
+                                role="target",
+                                subject="",
+                                value=extract_expected_answer(needle),
+                                text=needle,
+                                requested_depth=depth,
+                            )
+                        ],
                         target_tokens=target_tokens,
-                        depth=depth,
                         tokenizer=self.tokenizer,
                     )
+
+                    context = haystack.text
+
+                    # Counted from the TEXT, never from haystack.total_tokens.
+                    # Splicing tokens yields a non-canonical sequence, so the
+                    # served text re-encodes one token shorter in 27% of cases
+                    # (J-030, LIMITATIONS 1.19). The text is what is served, so
+                    # the text's count is the one num_ctx must be built from.
                     actual_tokens = count_tokens(context, tokenizer=self.tokenizer)
                     if self._exceeds_context_limit(actual_tokens):
                         logger.warning(
@@ -172,6 +197,9 @@ class NiahBenchmark:
                             model_options={
                                 "num_ctx": num_ctx,
                             },
+                            needle_inventory=[asdict(block) for block in haystack.blocks],
+                            realised_depth=haystack.blocks[0].realised_depth,
+                            filler_tokens_used=haystack.filler_tokens_used,
                         )
                     )
 
@@ -233,6 +261,18 @@ class NiahBenchmark:
                 # case would make the archive unusable - but the digest still
                 # detects corpus drift (D-012).
                 "prompt_sha256": prompt_sha256,
+                # The full inventory of what was planted, with roles and where
+                # each block landed. At k=1 this is one target block and adds
+                # nothing a reader could not infer; it is recorded anyway so the
+                # shape is identical across families and a rule tier never has
+                # to branch on "is this the old single-needle form?".
+                #
+                # It is NOT a fingerprint component here. `distractors` was
+                # pre-registered in D-012 and stays unset while k=1, so the
+                # archive's 166 replayable fingerprints keep matching.
+                "needle_inventory": case.needle_inventory,
+                "realised_depth": case.realised_depth,
+                "filler_tokens_used": case.filler_tokens_used,
                 "needle_template": self.needle_template,
                 "tail_guard_tokens": self.tail_guard_tokens,
                 "filler_sha256": self.filler_sha256,

@@ -1,14 +1,35 @@
+"""NIAH's case construction: the legacy needle file and its frozen wrapper.
+
+The haystack primitive moved to `long_range_dependency/haystack.py` when the
+keyed families arrived. It is re-exported here because the archive, the
+byte-identity test and every existing import path name it through this module,
+and none of that is worth breaking to tidy an import.
+"""
+
+from probebench.benchmarks.long_range_dependency.haystack import (
+    MARKED_TEMPLATE,
+    Block,
+    EncodedFiller,
+    Haystack,
+    PlacedBlock,
+    build_haystack,
+    load_filler,
+)
 from probebench.core.tokenizer import Tokenizer
 
-
-def load_filler(path: str) -> str:
-    """Load filler text from disk."""
-
-    with open(
-        path,
-        encoding="utf-8",
-    ) as file:
-        return file.read()
+__all__ = [
+    "MARKED_TEMPLATE",
+    "Block",
+    "EncodedFiller",
+    "Haystack",
+    "PlacedBlock",
+    "build_haystack",
+    "count_tokens",
+    "create_haystack",
+    "extract_expected_answer",
+    "load_filler",
+    "load_needles",
+]
 
 
 def load_needles(path: str) -> list[str]:
@@ -59,33 +80,29 @@ def create_haystack(
     depth=0.0 -> beginning
     depth=0.5 -> middle
     depth=1.0 -> end
+
+    Kept with its original signature AND its original output. It is now a thin
+    wrapper over build_haystack; the wrapper re-encodes the corpus on every
+    call, which is why NiahBenchmark hoists EncodedFiller out of its loop and
+    calls build_haystack directly. This survives for callers holding only the
+    filler text, and as the shape the archive was built with.
     """
 
-    if not 0.0 <= depth <= 1.0:
-        raise ValueError(f"Depth must be between 0 and 1, got {depth}")
-
-    filler_tokens = tokenizer.encode(filler)
-
-    needle_text = f"\n\n[IMPORTANT SECRET]: {needle}\n\n"
-
-    needle_tokens = tokenizer.encode(needle_text)
-
-    max_filler_tokens = target_tokens - len(needle_tokens)
-
-    if max_filler_tokens <= 0:
-        raise ValueError("Target token count is too small for the needle.")
-
-    limited_filler_tokens = filler_tokens[:max_filler_tokens]
-
-    insertion_index = int(len(limited_filler_tokens) * depth)
-
-    final_tokens = (
-        limited_filler_tokens[:insertion_index]
-        + needle_tokens
-        + limited_filler_tokens[insertion_index:]
-    )
-
-    return tokenizer.decode(final_tokens)
+    return build_haystack(
+        filler=EncodedFiller.encode(filler, tokenizer),
+        blocks=[
+            Block(
+                block_id="target",
+                role="target",
+                subject="",
+                value=extract_expected_answer(needle),
+                text=needle,
+                requested_depth=depth,
+            )
+        ],
+        target_tokens=target_tokens,
+        tokenizer=tokenizer,
+    ).text
 
 
 def count_tokens(
