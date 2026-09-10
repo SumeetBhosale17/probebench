@@ -242,7 +242,7 @@ ProbeBench result file.
 | Multi-block haystack primitive | **built** | `benchmarks/long_range_dependency/haystack.py` — k blocks at k depths, full inventory; single-needle path byte-identical (166 fingerprints replay) |
 | Needle inventory in the record | **built** | schema 1.5 — `needle_inventory`, `realised_depth`, `filler_tokens_used`. This is what makes the rule tier affordable |
 | Shared experiment pipeline | **built** | `experiments/pipeline.py` (D-021) — the KV-probe/preflight/two-phase ordering exists once |
-| `NIAH_distractor` (keyed discrimination) | **built, unrun** | k ∈ {0,1,2,4,8} decoys (D-022, D-023); k=0 is the calibration cell |
+| `NIAH_distractor` (keyed discrimination) | **built, k=0 run** | k ∈ {0,1,2,4,8} decoys (D-022). **Calibration done: keyed-vs-legacy wording delta is −4.5 points** (D-023); k>0 still unrun |
 | `NIAH_multihop` (two-hop composition) | **built, first run done** | Produced the project's first deliberate failures (J-031, J-032). Registry rotation added (D-024) — rank and subject identity are now separable |
 | Case identity (`case_key`, `case_fingerprint`) | **built** | `core/case_identity.py`, plus one `identity.py` per family (D-012, D-015) |
 | Hardware provenance per run | **built** | `core/hostinfo.py` (D-013); null when Ollama is remote |
@@ -900,10 +900,12 @@ having anything to diagnose.
    Then a second model, then hand-label a sample. Target is ≥50 failing cases
    spanning ≥3 modes; the current corpus has 16 spanning 2.
 
-2. **Run `NIAH_distractor` at all, starting with k=0.** It is built and has
-   never been executed. The k=0 cell is D-023's calibration — until it runs,
-   the keyed-vs-legacy wording delta is an assumption, and every cross-arm
-   figure in both new families depends on it.
+2. **Run `NIAH_distractor` at k>0.** The k=0 calibration is done — the
+   keyed-vs-legacy wording delta is **−4.5 points** (D-023), small enough that
+   cross-arm figures are interpretable with a stated correction. What has never
+   run is the part that measures discrimination: k ∈ {1,2,4,8}. Until it does,
+   `niah.distractor_retrieval` has been observed only as a side effect of
+   multi-hop, never in the experiment built for it.
 
 3. **The repudiation guard is blind to the new families (§1.18, J-029).** Both
    keyed families ship a **known-optimistic** `lexical_exact_match`. J-031's two

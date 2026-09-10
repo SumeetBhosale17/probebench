@@ -1612,7 +1612,21 @@ majority of failure cases, rather than a fabrication. If most wrong answers turn
 out to be *absent* from the prompt entirely, the uniform template has made the
 task harder in a way not intended, and B needs revisiting.
 
-**What we got.** not yet.
+**What we got.** The prediction is **still open** — `NIAH_distractor` has only
+been run at k=0, where there are no decoys to return, so "planted value versus
+fabrication" has nothing to measure yet.
+
+What *is* settled is the thing this decision worried about most. The uniform
+template was adopted knowing it would cost comparability with NIAH, and the size
+of that cost is now measured rather than assumed: **−4.5 points** (see D-023).
+Small enough that the keyed families are interpretable alongside NIAH with a
+stated correction, which is the outcome that keeps both arms useful.
+
+One observation to carry into the k>0 runs. The single k=0 failure sits at depth
+0.7 (3 of 4), and NIAH at the same length has no failures at any depth. At n=4
+per cell this is noise. It is recorded because if a depth effect appears in the
+keyed arm that NIAH does not have, the uniform template will have changed more
+than the wording, and this is the earliest sign of it.
 
 ---
 
@@ -1659,7 +1673,37 @@ is unchanged. A large gap would mean the wording change dominates, which would
 make **every** cross-arm comparison in both new families unreportable and is the
 single most important number to get early.
 
-**What we got.** not yet.
+**What we got.** Confirmed, and this is the number the whole ordering argument
+was for. `qwen3:0.6b` at 4,000 tokens:
+
+```
+  NIAH (legacy needles)    retrieval 1.000  (n=37)   compliance 1.000
+  keyed, k=0               retrieval 0.955  (n=22)   compliance 0.955
+
+  keyed-vs-legacy wording delta: -0.045
+```
+
+**−4.5 points.** "Within a few points", as predicted, and the reading that
+follows is the good one: the keyed families are interpretable alongside NIAH
+provided the correction is stated. Had it been 20 points — plausible, given §1.9
+measured a 19-point spread across NIAH's six needles from wording alone — every
+cross-arm figure in both new families would have been unreportable and D-022
+would have needed reopening.
+
+Two caveats on the number itself. It is **one model at one length**, so it is a
+calibration for `qwen3:0.6b` at 4k and not a general constant; the delta may well
+move with model and context length, and a family-level correction would need it
+measured at more than one point. And n=22 against n=37 is thin — the single
+failure is one case at depth 0.7.
+
+**The ordering decision was also right for a reason it did not state.** Running
+distractor first meant the calibration existed before any k>0 result had to be
+interpreted. Running multi-hop first — D-020's original ranking — would have
+produced J-032's 16 failures with no way to tell how much of the shift from NIAH
+was the task and how much was the template.
+
+Note the calibration was cheap: 20 cases, about a minute. The most important
+number in the cross-arm story cost less than any run that depended on it.
 
 ---
 
