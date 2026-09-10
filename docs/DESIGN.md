@@ -121,12 +121,14 @@ Beyond blocking failures, it enables two things the project needs:
 - `recommend_target_tokens()` selects the feasible rungs of a standard
   ladder, which is what `--profile auto` consumes.
 
-### 3.2 Two-phase execution — `core/runner.py`, `experiments/.../run.py`
+### 3.2 Two-phase execution — `core/runner.py`, `experiments/pipeline.py`
 
 **What.** All generations run first; all evaluations run second.
 
 **How.** `BenchmarkRunner.run_case` was split into `generate()` and
-`evaluate()`. `_run_two_phase` drives them in separate loops.
+`evaluate()`. `_run_two_phase` drives them in separate loops. It lived in
+NIAH's runner until D-021 moved it to `experiments/pipeline.py`, where all
+three experiments share one copy.
 
 **Why.** This is the direct fix for Failure B's thrash. Single-phase
 alternation forces `2N` model swaps for N cases; two-phase forces two, one
@@ -194,13 +196,15 @@ omitted rather than passed empty.
 whole archive, and a judge capacity floor that is known to exist but not
 located.
 
-### 3.4 `num_ctx` bucketing — `benchmarks/.../benchmark.py`
+### 3.4 `num_ctx` bucketing — `benchmarks/long_range_dependency/*/benchmark.py`
 
 **What.** `num_ctx` is rounded up to a 512-token boundary.
 
 **Why.** Discovered during verification: a 16,000-token target produced
-`num_ctx` of both `16,511` and `16,512` across depths, because
-`create_haystack` lands on slightly different token counts. A one-token
+`num_ctx` of both `16,511` and `16,512` across depths, because the haystack
+builder lands on slightly different token counts. J-030 later found the
+mechanism: splicing tokens produces a non-canonical sequence, so the served
+text re-encodes 0 or 1 tokens shorter, depth-dependently (§1.19). A one-token
 difference spawns a **separate `llama-server`**. Bucketing collapsed a
 25-case run from 6 distinct runners to 5, and guarantees all cases at one
 target size share one.
@@ -309,6 +313,171 @@ preflight *appeared* to work while doing nothing, because
 `check_memory_budget` treats `None` as "skip". A silent no-op is the worst
 failure mode for a safety check.
 
+### 3.11 Content-addressed case identity — `core/case_identity.py`, `*/identity.py`
+
+**What.** Two keys per case. `case_key` is the design point
+(`niah/t4000/d0.50/n06bfb731/marked/g0`); `case_fingerprint` is a digest over
+everything determining the model's input.
+
+**How.** Canonical JSON — sorted keys, no whitespace — with
+`FINGERPRINT_VERSION` hashed *inside* the digest, so "the input changed" is
+distinguishable from "we started hashing one more thing". Raw floats are
+**refused**: `0.1 + 0.2` and `0.3` would hash differently, so depths go through
+`format_depth()` and arrive as strings.
+
+**Why.** `case_id` is `niah_{target}_{depth}_{counter:04d}`, and the counter runs
+over the whole sweep — it shifts when `--needles` changes or a cell is skipped
+(J-004). Cross-model joins on it are unsound. Hardware is deliberately *not* a
+component: the machine does not change the model's input, and including it would
+stop the same case joining across machines, which is the comparison D-013 exists
+to enable.
+
+Each family declares its own components; `core/` only decides how a component set
+is serialised. That is what stops two families quietly disagreeing about it.
+
+**Validated.** 166 archived records rebuild their stored fingerprint end to end,
+through the generator, the prompt assembly and the component set. A live 2-case
+run joined the archive 2 of 2 after the k-block refactor.
+
+### 3.12 Measured KV precision — `core/kvprobe.py`
+
+**What.** The server's actual KV cache precision, measured rather than assumed.
+
+**How.** `/api/ps` reports each loaded model's `size` and the `context_length` it
+loaded at. Since `size = weights + buffers + kv_bytes_per_token · num_ctx` and
+only the last term depends on context, loading the same model twice at two
+context sizes and differencing cancels everything else exactly:
+
+```
+kv_bytes_per_token = (size_b − size_a) / (ctx_b − ctx_a)
+bytes_per_element  = kv_bytes_per_token / (2 · n_layers · n_kv_heads · head_dim)
+```
+
+**Why.** `--kv-cache-type` only ever configured our own *estimator* (J-016). The
+real setting lives in `OLLAMA_KV_CACHE_TYPE` in a systemd daemon running as
+another user, whose `/proc/PID/environ` is unreadable (J-018). Asking our own
+shell answers a question about the wrong process. So this uses R-001's arithmetic
+as a *measuring instrument* rather than a predictor, and it works remotely.
+
+Two calibrations were paid for in J-026 and J-028. ggml quantises in blocks of 32
+values plus an fp16 scale, so `q8_0` costs **34/32 = 1.0625** bytes/element, not
+1.0 — using the nominal width rejected a correct reading of 1.19 as unrecognised.
+And Ollama *clamps* a requested `num_ctx` to the model's window and reports the
+clamped value, so the probe must know the ceiling or it matches nothing.
+
+A mismatch between measured and requested **refuses the run**: archiving a
+mislabelled record is worse than not running. It caught a live misconfiguration
+before it produced 540 bad records (J-025).
+
+### 3.13 Instruction compliance — `evaluation/.../compliance.py`
+
+**What.** Did the response obey "answer ONLY with the code"? Binary, offline,
+free.
+
+**How.** `classify_form()` normalises markup, quotes and trailing punctuation and
+returns `exact | stripped | prose | empty`. It scores **FORM** and never reads
+`expected`.
+
+**Why that restriction matters.** Defining compliance as "equals the expected
+string" makes it a strictly stronger `lexical_exact_match` — every compliant
+response is correct by construction, the "obeyed the format but retrieved the
+wrong code" cell becomes *unreachable* rather than merely unobserved, and the
+2×2 collapses algebraically to its second term. J-022 confirmed the cell was
+empty across 424 NIAH records, which is precisely why the better-defined rule
+cost nothing to adopt — and J-032 then found **5 cases in it**, which the
+value-based definition could never have surfaced.
+
+Born with a `RULE_VERSION`, which is the one thing `lexical_exact_match` cannot
+do: three definitions share two names in the archive and nothing says which
+produced a given value (D-014).
+
+### 3.14 The k-block haystack primitive — `benchmarks/long_range_dependency/haystack.py`
+
+**What.** Splice *k* blocks into a token-controlled filler body at *k* depths,
+returning the text **plus a full inventory** of what was planted and where.
+
+**How.** Depths are computed against the **original** body, then the document is
+assembled by segment rather than spliced in place — nothing is mutated, so no
+index can be invalidated. Realised depth is computed after placement, because
+the denominator is not known until every block is placed.
+
+**Why depths against the original body.** The lesser reason is that depths stay
+independent and comparable across *k*. The real one: it holds the filler
+*content* at each insertion site identical across every cell of the grid. §1.9
+measured the filler as a semantic distractor, so which Tolstoy passage neighbours
+a needle is a first-order variable — depths against a growing body would slide
+every later site and change that neighbour as a side effect of *k*, confounding
+the distractor axis with the filler-neighbourhood axis.
+
+**Why collisions raise.** Two repairs are available and both corrupt the
+measurement. Dropping a colliding block varies *k* across cells and confounds
+depth with difficulty; shifting one perturbs the background in exactly the cells
+where the target is nearest a distractor, which is where the signal is. Callers
+choose depths that interleave — the target sweeps tenths, the background sits on
+sixteenths — which makes the branch unreachable for every documented grid.
+
+**Cost.** The single-needle path had to stay byte-identical: 590 archived records
+join on `case_fingerprint`, which hashes `prompt_sha256`, so one changed byte
+would stop the archive matching anything run afterwards. Guarded three ways —
+three pinned digests, an independent reference implementation of the pre-refactor
+algorithm over the full grid, and the 166-record replay.
+
+### 3.15 The shared experiment pipeline — `experiments/pipeline.py`
+
+**What.** Everything that is not family-specific: run id, output path, model
+inspection, host provenance, KV probe, case build, memory plan, two-phase
+execution, summary.
+
+**How.** An experiment supplies an `ExperimentPlug` — build cases, build
+evaluators, and whether an embedding model must be present. NIAH's runner went
+from 485 lines to 119.
+
+**Why.** The ordering in it is *knowledge*, not arrangement, and most of it was
+paid for with production failures: the KV probe runs before case generation so it
+cannot evict the sweep's runner (invariant 3), the memory plan runs before any
+model call (invariant 2), generation and evaluation are separate phases (R-002).
+Three copies of that ordering would be two chances to regress it silently.
+
+**One thing the extraction broke, and how.** The log file handler was attached to
+the NIAH runner's **own module logger**. After the split, the pipeline's messages
+and each family's messages live on *sibling* loggers — so the self-judging
+warning that §1.2 depends on being visible would have been written to no file at
+all, and nothing errors when a log record has no handler. Fixed by attaching to
+the `probebench` package logger, which is what a run log should always have
+captured. **Generalisable: extracting a module splits a logger hierarchy, and the
+failure mode is silence.**
+
+### 3.16 Three experiments on one primitive — `NIAH`, `NIAH_distractor`, `NIAH_multihop`
+
+**What.** Retrieval, discrimination, and composition — the same corpus, the same
+marker, the same lengths, three different tasks.
+
+| | NIAH | NIAH_distractor | NIAH_multihop |
+|---|---|---|---|
+| Planted | 1 needle | 1 target + k decoys | 1 pointer + k registry entries |
+| Asks | "the important secret" | "the code for {subject}" | "the code for {pointer}" |
+| Task | retrieval | discrimination | **composition** |
+| Answer reachable in | 1 lookup | 1 lookup + discrimination | **2 lookups** |
+
+**How the keyed families avoid §1.9.** One template, `The access code for
+{subject} is {value}.`, twelve subjects. Every needle is **exactly 15 tokens**,
+one value shape, distinct leading characters, none occurring in *War and Peace* —
+asserted by test, because "uniform" is a property of a data file and data files
+drift. Only the subject distinguishes two needles, so a wrong answer equal to a
+planted code is *necessarily* a discrimination failure.
+
+**Why that is not free.** Uniform wording deletes the 19-point variable §1.9
+measured *by construction*, so distractor accuracy is **not comparable** with
+NIAH accuracy. The k=0 cell is the one bridge: NIAH's structure with only the
+wording changed, which turns the delta into a measured quantity instead of an
+assumption (D-023). It bridges exactly one of the four differences — see §1.20.
+
+**Why multi-hop has no k=0 or k=1 cell.** With one registry entry the only code
+in the text is the answer, so returning it proves nothing about composing two
+hops. The decoys *are* the experiment. And the pointer deliberately carries no
+value: putting the answer in it would let a single-hop read score as a two-hop
+one.
+
 ---
 
 ## 4. Verification evidence
@@ -327,6 +496,11 @@ All measured on EndeavourOS, 23 GiB RAM, RTX 3050 Laptop 4 GiB, `qwen3:4b`.
 | Non-interactive refuses downloads | `doctor tinyllama < /dev/null` → exit 1, nothing pulled |
 | CLI surface is sound | `scripts/smoke_test.sh` — 16/16 |
 | Full pipeline | 2-case run: all three metrics 1.0, `status=ok` |
+| KV probe reads the real precision | 1.06 B/element measured → `q8_0`; caught a daemon override that had silently applied nothing (J-025) |
+| Case identity survives construction change | 166 archived fingerprints rebuild through the generator + prompt assembly; a fresh run joined the archive 2/2 after the k-block refactor |
+| Single-needle path is byte-identical | 3 pinned digests + an independent reference implementation over 168 grid points + the 166-record replay |
+| Compliance separates from retrieval | J-032: 5 of 50 cases are bare-and-wrong — the 2×2 cell empty across 424 NIAH records |
+| Multi-hop produces real failures | 16 of 50 at 4,000 tokens, two modes, classified offline from the stored inventory with no model call |
 
 ---
 
@@ -359,3 +533,29 @@ threats-to-validity section:
 5. **The tokenizer mismatch (LIMITATIONS §1.1) is currently the single
    largest threat to validity** and should be resolved before any
    cross-model context-length claim is published.
+
+6. **A saturated benchmark is measuring its own ceiling, not the model.**
+   Every metric on every successful NIAH case in a 590-record archive is
+   exactly 1.0. The fix that worked was not a longer context or a weaker model
+   — both make the task *harder* without making it *different*. Changing the
+   task's structure (one pointer indirection) produced a 32% failure rate at
+   the shortest length in the grid. Report the structure of the task, not only
+   its size.
+
+7. **Three tasks that share a corpus, a marker and a length are still three
+   tasks.** `NIAH`, `NIAH_distractor` and `NIAH_multihop` emit identical metric
+   names over identical inputs and are not comparable on any axis (§1.20).
+   Any cross-family figure must be faceted or must state which of the four
+   differences it holds fixed. The similarity of the output is the hazard.
+
+8. **Synthetic benchmarks should record what they constructed, not only what
+   they expect.** Because we build the haystack, the failure taxonomy is
+   largely decidable by substring search over a known inventory — no judge, no
+   second model call, and re-runnable over stored results when the rules
+   change. Storing only the expected answer discards that. This is the single
+   cheapest thing in the project and it is what made J-032's two-mode split a
+   regex rather than a labelling exercise.
+
+9. **Report *n* next to any failure-mode claim.** A conclusion drawn from six
+   cases in this project was overturned by fifty the same day (J-031 → J-032):
+   `niah.distractor_retrieval` fired 0/6, then 7/16. Both entries are kept.

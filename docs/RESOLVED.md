@@ -315,3 +315,92 @@ revision graded a run. The residual `0.99` for a correct verbose answer shows
 a verbosity bias surviving in the judge as well as in `semantic_similarity`
 (J-007), which suggests it is a property of specifying `expected` as a bare
 12-character code rather than of either evaluator.
+
+---
+
+## R-004 — The registry indirection was built for a plurality that did not exist
+Resolved: 2026-09-09 | Was: LIMITATIONS §5.4 | Code: `experiments/pipeline.py`, `experiments/registry.py`, `benchmarks/long_range_dependency/`
+
+**The limitation.** `EXPERIMENTS` contained a single entry. The `all` command,
+the health check's data-file resolution and the whole `ExperimentSpec` layer
+existed to serve one experiment, so none of it was load-bearing and none of it
+was proven. `benchmarks/hallucination/` and `evaluation/hallucination/` were
+empty package stubs. A scope rule that is never exercised is a scope rule that
+is wrong in ways nobody has discovered.
+
+**Methodology.** The trigger was not the limitation — it was needing two new
+experiments for the long-range-dependency work, which forced the question of
+whether `run.py` should be copied.
+
+Counting what was actually family-specific in the 485-line NIAH runner turned
+out to be the whole investigation. The answer was **three things**: the
+evaluator list, the `NiahParams`/`NiahBenchmark` construction, and two module
+constants (`FILLER_PATH`, `NEEDLES_PATH`) that were **already dead** — the
+settings layer had become the source of truth for both paths and nothing read
+them. Everything else — model inspection, host provenance, the KV probe, the
+memory plan, two-phase execution, the summary — was generic and had simply never
+been separated because there was nothing to separate it from.
+
+*The wrong turn.* The first instinct was to add a `--distractors k` flag to the
+existing NIAH runner. Smallest diff, no new machinery. It was rejected only after
+writing down what it did to the *records*: three different tasks would share one
+`run.experiment` value, so a record could not say which task produced it without
+someone reading a parameter. Given §1.20 — the three families are not comparable
+on any axis — a shape that invites pooling is a measurement-validity hazard, not
+a convenience. That is the argument the decision turned on, and it is not visible
+from the diff size.
+
+**Decision.** See D-021. Extract `experiments/pipeline.py`, keep a thin
+per-experiment plug. Rejected: copying the runner (guarantees drift in the one
+path every archived record came from), and the flag (pooling hazard).
+
+Sited at `experiments/pipeline.py`, deliberately **not** under a family — a
+shared pipeline inside `long_range_dependency/` would be the same scope violation
+as putting needles in `core/`, one directory down.
+
+**Why it works.** The ordering in the pipeline is *knowledge*, not arrangement,
+and most of it was bought with production failures: the KV probe runs before case
+generation so it cannot evict the sweep's runner (invariant 3, R-002); the memory
+plan runs before any model call (invariant 2, R-001); generation and evaluation
+are separate phases (R-002). One copy means one place to fix and one place to
+regress. Three copies would have been two chances to regress it silently, in a
+file whose correctness is invisible from reading it.
+
+The registry indirection is now genuinely load-bearing: adding
+`NIAH_distractor` and `NIAH_multihop` required **one `ExperimentSpec` each and
+no edits to the CLI, the `all` command, or the health check** — which is the
+property §5.4 said was unproven.
+
+**How we know.** Three experiments are registered and runnable
+(`probebench experiments list`). The 16-check smoke test passes. NIAH's output
+is byte-identical through the extraction: the three pinned haystack digests, the
+166-record fingerprint replay, and — the strongest leg, because it exercises the
+generator refactor and the extraction together — **a live 2-case run joined the
+archive on `case_fingerprint`, 2 of 2**, against records produced by the
+pre-extraction code.
+
+A regression in the pipeline ordering would surface as a memory-preflight or
+runner-thrash failure, which R-001's and R-002's guards already catch.
+
+**Residual.** Four things this does not cover.
+
+*The plurality is one family deep.* All three experiments are
+`long_range_dependency`, share a corpus, and share the haystack primitive. The
+scope rule that matters — that `core/` carries no needles — is exercised, but a
+genuinely different family (`hallucination/` is still an empty stub) would test
+`ExperimentSpec` in ways three siblings cannot.
+
+*One extraction bug was found by running it, not by review.* The log file
+handler was attached to the NIAH runner's own module logger; after the split, the
+family's messages and the pipeline's live on sibling loggers, so the self-judging
+warning §1.2 depends on would have gone to no file — silently, since nothing
+errors when a log record has no handler. Fixed by attaching to the `probebench`
+package logger. Generalisable: **extracting a module splits a logger hierarchy,
+and the failure mode is silence.**
+
+*`ExperimentPlug` has three fields and no versioning.* If a family ever needs a
+different *ordering* rather than different content, the plug cannot express it and
+the honest answer will be a second pipeline, not a fourth field.
+
+*§5.5 is untouched* — the judge and embedding models still bypass the memory
+plan, in the pipeline exactly as they did in the runner.

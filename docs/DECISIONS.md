@@ -1447,7 +1447,7 @@ above, remains unaddressed.
 ---
 
 ## D-021 — Extract a shared experiment pipeline rather than duplicating `run.py`
-Status: accepted
+Status: executed → R-004
 Decided: 2026-09-09 | Trigger: the multi-insert plan, Risk 2 | Changes what is measured: no
 
 **The problem.** `NIAH_distractor` and `NIAH_multihop` need everything

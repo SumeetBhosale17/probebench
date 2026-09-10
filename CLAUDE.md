@@ -426,16 +426,33 @@ NIAH subtypes:
 
 | Label | Parent | Meaning | Reachable today |
 |---|---|---|---|
-| `niah.distractor_retrieval` | `WRONG_ANSWER` | Returned a different needle from the same haystack | **no** — one needle per haystack |
+| `niah.distractor_retrieval` | `WRONG_ANSWER` | Returned a different needle from the same haystack | **yes** — 7/16 multi-hop failures (J-032); also reachable via filler competition (§1.9) |
 | `niah.fabricated_value` | `WRONG_ANSWER` | Code-shaped string absent from the whole prompt | yes |
 | `niah.partial_value` | `WRONG_ANSWER` | Near-miss of the expected code | yes |
 | `niah.wrong_section` | `WRONG_ANSWER` | Quoted a different region of the haystack | yes |
 | `niah.needle_verbatim_echo` | `FORMAT_VIOLATION` | Echoed the needle sentence instead of the code | yes |
 
-`niah.distractor_retrieval` is unreachable **by construction** —
-`create_haystack` inserts exactly one needle. It ships in the enum marked
-unreachable with the reason recorded; an honest enum with a documented hole
-beats a quietly missing label.
+**Corrected 2026-09-09.** This section used to say
+`niah.distractor_retrieval` was unreachable by construction, because
+`create_haystack` inserted exactly one needle. It was wrong twice over, and both
+corrections are instructive.
+
+First, §1.9 found the label reachable *without any code change*: the distractor
+is in the **filler**. *War and Peace*'s opening court intrigue was returned
+instead of the needle in 34 of 330 cases, 32 of them at depths 0.0–0.2. A
+"single-needle" haystack has a competing answer in it whether or not we planted
+one.
+
+Second, the haystack builder now plants k blocks, so the label is reachable by
+construction too — and it **fires**: 7 of 16 multi-hop failures return a planted
+but wrong code (J-032). Note the order in which we learned that. At n=6 the label
+fired 0 times and we wrote down that real failures did not look like this; fifty
+cases overturned it the same day.
+
+The lesson worth keeping is not about this label. It is that "unreachable by
+construction" is a claim about the construction, and it goes stale the moment the
+construction changes — so it belongs next to the enum, dated, rather than in
+someone's head.
 
 ### Classification — `core/classification.py`, `classification/<family>/<EXPT>/`
 
@@ -545,18 +562,31 @@ archive the whole time.
 NIAH**: no genuine NIAH retrieval failure has been isolated from an instrument
 artefact.
 
-**It does not stand for multi-hop.** The first `NIAH_multihop` run produced two
-failures in six cases at **4,000 tokens** — the length at which every NIAH metric
-in the archive is 1.0 (J-031). Both are the same mode, and it is one the archive
-has never contained: the model resolves the pointer's *subject* and not its
-*referent*, reports that the pointed-from location has no code, and never takes
-the second hop. A composition failure, not a retrieval failure. Verified against
-the stored inventory: neither response contains any of the k+1 planted codes.
+**It does not stand for multi-hop.** A 50-case `NIAH_multihop` sweep on
+`qwen3:0.6b` at **4,000 tokens** — the length at which every NIAH metric in the
+archive is 1.0 — failed **16 times** (J-031, J-032). Two separable modes:
 
-`niah.distractor_retrieval` fired **0 of 6**. The label the distractor work was
-meant to make reachable is not what the first failures look like — which is
-precisely why the taxonomy is derived from an observed inventory rather than
-implemented from the hypothesis below.
+```
+ 9  no code emitted          ("None of the access codes listed in the text
+                               relate to Redmont.")
+ 7  returned a planted code  — but the wrong one
+```
+
+The dominant mechanism is that the model resolves the pointer's *subject* and
+not its *referent*: it reports that the pointed-from location has no code and
+never takes the second hop. A composition failure, not a retrieval failure. Every
+classification came from a substring search over the stored `needle_inventory` —
+no judge, no second model call.
+
+**The 2×2 is no longer degenerate.** Five of those 50 are bare-and-wrong — the
+cell J-022 found empty across 424 NIAH records, and the one that makes
+`instruction_compliance` independent of `lexical_exact_match` rather than a proxy
+for it.
+
+The largest effect in the run was not predicted: **which registry entry the
+pointer names.** Rank 2 fails 80% at both k=4 and k=8, at document depths 0.685
+and 0.314 — rank, not position. It is confounded with subject identity by
+construction, and separating them is the next run.
 
 **Instruction-following is not.** `instruction_compliance` (D-018) fires on
 360 of 424 archived responses, and on `qwen3:0.6b` it produces the project's
@@ -595,24 +625,30 @@ These must all hold before any claim that the taxonomy works:
 
 ## Build order
 
-1. **Identity and evidence capture.** `case_key`, `case_fingerprint`,
-   `prompt_sha256`; stop discarding `done_reason` / `eval_count` /
-   `prompt_eval_count`; schema bump with migrations and a test over the
-   archived files; a `reporting/load.py` that migrates and joins. First,
-   because every failure-generating run after it is then joinable from its
-   first record — and because it is the first real consumer of
-   `core/migrations.py`, which is what forces §5.2 to be repaid properly
-   rather than declared fixed.
+1. ~~**Identity and evidence capture.**~~ **DONE.** `case_key`,
+   `case_fingerprint`, `prompt_sha256`; `done_reason` / `eval_count` /
+   `prompt_eval_count` captured; schema 1.0→1.5 with migrations and a test over
+   every archived file. **`reporting/load.py` is the one piece still missing** —
+   the migrate-and-join layer that turns 590 records into one table. It is now
+   the binding constraint on every cross-run claim.
 
-2. **Make failures exist.** Push contexts toward the feasibility ceiling
-   (≈88k on the reference machine); finer depth grid; a weaker model. Then
-   the generator change: insert *k* distractor needles at other depths and
-   ask for one of them.
+2. **Make failures exist.** ~~Push contexts toward the feasibility ceiling;
+   finer depth grid; a weaker model.~~ **Largely done, and the ordering in this
+   step was wrong.** Length and model size were listed first and neither is what
+   produced failures. Changing the task's *structure* did: `NIAH_multihop` fails
+   16 of 50 at **4,000 tokens**, the shortest length in the grid, on a model
+   whose NIAH scores are all 1.0 there (J-032).
 
-   ⚠️ **This changes what is measured.** NIAH becomes a discrimination task,
-   not a pure retrieval task — flag it as such in results and in the paper.
-   It is also the only route by which `niah.distractor_retrieval` becomes
-   reachable at all. Journal the resulting failure inventory.
+   ⚠️ **This changes what is measured.** Three families now emit identical
+   metric names over identical corpora and are **not comparable** with each
+   other (§1.20) — flag it in results and in the paper. `NIAH_distractor` is
+   built but **unrun**; its k=0 cell is the calibration everything cross-arm
+   depends on (D-023).
+
+   *Correction:* this step used to claim distractor injection was "the only
+   route by which `niah.distractor_retrieval` becomes reachable at all". §1.9
+   disproved that before any code changed — the distractor is in the filler,
+   and *War and Peace* was returned instead of the needle 34 times.
 
 3. **Freeze the taxonomy** from the observed inventory, at
    `TAXONOMY_VERSION = "1.0"`.

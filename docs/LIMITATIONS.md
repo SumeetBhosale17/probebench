@@ -217,10 +217,13 @@ the model answers *that* instead of the needle:
 precedes the intrigue — and the mode vanishes entirely from depth 0.3 on.
 `qwen3:0.6b` shows the same mode at 36k–40k in run `85d237650c49`.
 
-**Consequence for the taxonomy.** CLAUDE.md marks
+**Consequence for the taxonomy.** CLAUDE.md used to mark
 `niah.distractor_retrieval` "unreachable **by construction** — one needle per
-haystack". That is wrong: the distractor is in the *filler*, and the label is
-reachable today without the distractor-injection work in build-order step 2.
+haystack". That was wrong: the distractor is in the *filler*, and the label was
+reachable without any of the distractor-injection work in build-order step 2.
+**CLAUDE.md's taxonomy table was corrected on 2026-09-09**, and the label has
+since been observed firing directly — 7 of 16 multi-hop failures return a
+planted but wrong code (J-032).
 
 **Needle wording spans 19 points of accuracy**, more than context length does
 anywhere in that run:
@@ -855,7 +858,34 @@ are schema-1.0-without-status and will need it.
 
 ### 5.3 Test coverage does not reach the load-bearing logic — MAJOR
 
-`tests/` contains two tests (`test_tokenizer.py`, `test_ollama_registry.py`),
+**Updated 2026-09-09, and the update is the point.** The suite has grown from
+2 files to 11 and from a handful of tests to **111**, covering migrations, case
+identity, settings, the KV probe, the compliance and lexical rules, haystack
+byte-identity and the keyed families.
+
+**Not one of them touches the list below.** Every function this entry named in
+its original form is *still* untested:
+
+```
+kv_bytes_per_token        NOT covered      _exceeds_context_limit   NOT covered
+estimate_case_bytes       NOT covered      with_retries             NOT covered
+max_feasible_num_ctx      NOT covered      _normalize_argv          NOT covered
+_calculate_num_ctx        NOT covered      recommend_target_tokens  NOT covered
+```
+
+That is worth stating plainly rather than quietly revising the severity down.
+Test coverage grew where new code was written, which is the path of least
+resistance; it did not grow where the *oldest and most load-bearing* code lives.
+`kv_bytes_per_token` is the arithmetic behind R-001, `docs/DESIGN.md` §2.1 and a
+published article, and it has no test pinning it to the validated `qwen3:4b`
+figure. A number that appears in a paper and not in a test is a number nobody is
+defending.
+
+The original text follows, unchanged, because it is still correct.
+
+---
+
+`tests/` contained two tests (`test_tokenizer.py`, `test_ollama_registry.py`),
 both passing. One is a tiktoken round-trip; the other is marked
 `@pytest.mark.integration` and hits a live Ollama with a hardcoded
 `qwen3:4b`.
@@ -878,11 +908,9 @@ test pinning it to the validated `qwen3:4b` figure (147,456 bytes/token).
 `scripts/smoke_test.sh` covers the CLI surface at integration level but
 requires a live daemon and an installed model.
 
-### 5.4 Only one experiment exists — MINOR
-
-`EXPERIMENTS` contains a single entry. `benchmarks/hallucination/` and
-`evaluation/hallucination/` are empty package stubs. The `all` command and
-the registry indirection are built for a plurality that does not yet exist.
+Removal condition: every function named above has a test, and the KV formula has
+one pinning it to 147,456 bytes/token for `qwen3:4b`. Roughly an afternoon of
+work — all of them are pure functions over plain data and need no Ollama.
 
 ### 5.5 Judge and embedding models bypass the memory plan — MINOR
 
