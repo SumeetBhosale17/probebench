@@ -33,6 +33,7 @@ def _build_cases(
         filler_path=params.filler_path,
         needles_path=params.needles_path,
         registry_sizes=params.registry_sizes,
+        max_registry_rotations=params.max_registry_rotations,
         pointer_subject=params.pointer_subject,
         system_prompt=params.system_prompt,
         tokenizer=tokenizer,

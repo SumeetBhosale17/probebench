@@ -13,6 +13,85 @@ Migration = Callable[
 ]
 
 
+def normalise_shape(
+    record: dict[str, Any],
+) -> dict[str, Any]:
+    """Bring a pre-split record to the current BLOCK LAYOUT, by field presence.
+
+    Runs before the version walk, and is keyed on what the record contains
+    rather than on what it claims to be. That distinction is the whole point
+    (J-033). The chain dispatches on `(from_version, to_version)`, but at least
+    three different shapes were written while the version string said "1.0"
+    (J-005) - so "1.0" is not a shape, it is a period of time, and a chain
+    keyed on it cannot normalise what it cannot distinguish.
+
+    The oldest shape put everything in `run` and made `model` a bare string:
+
+        "model": "qwen3:4b",
+        "run": {"generation_model": ..., "tokenizer": {...}, "judge": {...},
+                "model_family": ..., "model_quantization": ...}
+
+    Every field the current layout needs is already there, so this is a pure
+    restructuring of data the record carries - an identity, never a verdict.
+    Nothing is invented: a field with no source is left ABSENT, and `host` in
+    particular is NOT synthesised, because those runs predate D-013 and there is
+    no honest value for a machine nobody recorded.
+
+    Idempotent, and a no-op on any record already in the current layout.
+    """
+
+    # The probe is "model is a STRING", not "model is not a dict". The loose
+    # form fired on any record lacking a `model` key and fabricated one, which
+    # is precisely what this function claims never to do - caught by
+    # test_current_version_passes_through_unchanged on a minimal stub.
+    if not isinstance(record.get("model"), str):
+        return record
+
+    migrated = dict(record)
+    run = dict(migrated.get("run", {}))
+
+    name = run.get("generation_model") or migrated.get("model")
+
+    migrated["model"] = {
+        key: value
+        for key, value in {
+            "name": name,
+            "provider": run.get("model_provider", "ollama"),
+            "family": run.get("model_family"),
+            "parameter_size": run.get("model_parameter_size"),
+            "quantization": run.get("model_quantization"),
+            "supported_context_window": run.get("supported_context_window"),
+            "supported_context_source": run.get("supported_context_source"),
+            "capabilities": run.get("model_capabilities"),
+            "tokenizer_model": run.get("tokenizer_model_metadata"),
+            "tokenizer_pre": run.get("tokenizer_pre_metadata"),
+        }.items()
+        if value is not None
+    }
+
+    if "tokenization" not in migrated and isinstance(run.get("tokenizer"), dict):
+        migrated["tokenization"] = run["tokenizer"]
+
+    if "evaluation" not in migrated:
+        evaluation = {
+            key: run[key] for key in ("embedding", "judge") if isinstance(run.get(key), dict)
+        }
+
+        if evaluation:
+            migrated["evaluation"] = evaluation
+
+    migrated["evaluation_details"] = migrated.get("evaluation_details", {})
+
+    # `run` keeps only what identifies the run. The rest moved out; leaving
+    # copies behind would make two fields authoritative for one fact, which is
+    # how `case.experiment` and `run.experiment` already disagree in places.
+    migrated["run"] = {
+        key: value for key, value in run.items() if key in ("run_id", "benchmark", "experiment")
+    }
+
+    return migrated
+
+
 def _migrate_1_0_to_1_1(
     record: dict[str, Any],
 ) -> dict[str, Any]:
@@ -200,6 +279,41 @@ def _migrate_1_4_to_1_5(
     return migrated
 
 
+def _migrate_1_5_to_1_6(
+    record: dict[str, Any],
+) -> dict[str, Any]:
+    """1.6 records the registry layout axis for multi-hop cases (D-024).
+
+    `case.registry_rotation` and `case.target_rank` separate the two things
+    J-032 could not: rank 2 failed 80% of the time, but rank 2 was always the
+    same subject, so "the third entry is hard" and "Kingsley is hard" fit the
+    data equally well.
+
+    Both are left ABSENT on archived records, and this one is worth spelling out
+    because the temptation is stronger than it was at 1.5. A 1.5 multi-hop record
+    DOES contain enough to recover the rank - `needle_inventory` lists the blocks
+    in document order with roles - so a migration could compute it. It does not,
+    for the same reason as before: the value would be a derivation, not a
+    measurement, and a reader could not tell which records had it recorded and
+    which had it inferred. Rank is cheap to compute at analysis time from the
+    inventory, where the derivation is visible in the analysis code.
+
+    `registry_rotation` genuinely cannot be recovered - every archived record was
+    built at rotation 0, but nothing in the record says so, and writing 0 would
+    be asserting a fact the record does not carry.
+
+    Note the identity scheme needed no change at all: `case_key` already hashes
+    the (id, depth) pairs, and a rotation is exactly a change to which id sits at
+    which depth. Rotation was a distinct design point before it was a code path.
+    """
+
+    migrated = dict(record)
+
+    migrated["schema_version"] = "1.6"
+
+    return migrated
+
+
 MIGRATIONS: dict[
     tuple[str, str],
     Migration,
@@ -209,6 +323,7 @@ MIGRATIONS: dict[
     ("1.2", "1.3"): _migrate_1_2_to_1_3,
     ("1.3", "1.4"): _migrate_1_3_to_1_4,
     ("1.4", "1.5"): _migrate_1_4_to_1_5,
+    ("1.5", "1.6"): _migrate_1_5_to_1_6,
 }
 
 
@@ -220,6 +335,11 @@ def migrate_record(
 
     if version is None:
         raise SchemaVersionError("Result is missing schema_version.")
+
+    # Shape first, version second. A record can be at the current VERSION and
+    # the wrong SHAPE - 24 archived records were, and every consumer written
+    # against the current layout broke on them (J-033).
+    record = normalise_shape(record)
 
     if version == CURRENT_SCHEMA_VERSION:
         return record

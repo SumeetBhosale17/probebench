@@ -238,12 +238,12 @@ ProbeBench result file.
 | Failure isolation, retries, health checks | **built** | `core/{runner,retry,health}.py` |
 | Two-phase execution, judge context pinning | **built** | `core/runner.py`, `evaluation/.../judge/` |
 | Structured provenance per case | **built** | `core/result.py` |
-| Schema migration path | **built** | `core/migrations.py` — 1.0→…→1.5, tested over the whole archive; J-005's three-shapes debt unpaid |
+| Schema migration path | **built** | `core/migrations.py` — 1.0→…→1.6, **shape first, version second** (J-033). J-005's three-shapes debt is now paid: 658 records migrate to one shape |
 | Multi-block haystack primitive | **built** | `benchmarks/long_range_dependency/haystack.py` — k blocks at k depths, full inventory; single-needle path byte-identical (166 fingerprints replay) |
 | Needle inventory in the record | **built** | schema 1.5 — `needle_inventory`, `realised_depth`, `filler_tokens_used`. This is what makes the rule tier affordable |
 | Shared experiment pipeline | **built** | `experiments/pipeline.py` (D-021) — the KV-probe/preflight/two-phase ordering exists once |
 | `NIAH_distractor` (keyed discrimination) | **built, unrun** | k ∈ {0,1,2,4,8} decoys (D-022, D-023); k=0 is the calibration cell |
-| `NIAH_multihop` (two-hop composition) | **built, first run done** | Produced the project's first deliberate failures (J-031) |
+| `NIAH_multihop` (two-hop composition) | **built, first run done** | Produced the project's first deliberate failures (J-031, J-032). Registry rotation added (D-024) — rank and subject identity are now separable |
 | Case identity (`case_key`, `case_fingerprint`) | **built** | `core/case_identity.py`, plus one `identity.py` per family (D-012, D-015) |
 | Hardware provenance per run | **built** | `core/hostinfo.py` (D-013); null when Ollama is remote |
 | KV precision measured, not assumed | **built** | `core/kvprobe.py` (D-017); a mismatched run refuses to start |
@@ -253,7 +253,8 @@ ProbeBench result file.
 | **Failure classification** (rules + LLM tier) | **planned** | `core/classification.py`, `classification/` |
 | **Cross-model joins** (content-addressed case identity) | **planned** | `core/case.py`, `reporting/load.py` |
 | **Structured failure records** in the schema | **planned** | `core/result.py`, `core/migrations.py` |
-| Aggregation / reporting across runs | **not wired** | `reporting/` is dead code (LIMITATIONS §5.1) |
+| Cross-run load / join / aggregate | **built** | `reporting/load.py` — migrate + flatten + join, with §1.20 / J-021 / §1.2 as **raises** |
+| Aggregation / reporting across runs | **partly wired** | `load.py` is live; `markdown.py`, `csv.py`, `json.py` still dead (§5.1) |
 
 **What ProbeBench is today, stated honestly: a scorer with unusually good
 plumbing, plus a genuinely novel memory-feasibility model.** It emits three
@@ -625,12 +626,14 @@ These must all hold before any claim that the taxonomy works:
 
 ## Build order
 
-1. ~~**Identity and evidence capture.**~~ **DONE.** `case_key`,
-   `case_fingerprint`, `prompt_sha256`; `done_reason` / `eval_count` /
-   `prompt_eval_count` captured; schema 1.0→1.5 with migrations and a test over
-   every archived file. **`reporting/load.py` is the one piece still missing** —
-   the migrate-and-join layer that turns 590 records into one table. It is now
-   the binding constraint on every cross-run claim.
+1. ~~**Identity and evidence capture.**~~ **DONE**, including
+   `reporting/load.py`. 658 records across six declared versions now load as one
+   table. Building it immediately surfaced J-033: the migration chain normalised
+   the *version* and not the *shape*, so three shapes were declaring `"1.6"` and
+   24 records had `model` as a bare string. CLAUDE.md predicted this — "the first
+   real consumer of `core/migrations.py` is what forces §5.2 to be repaid
+   properly rather than declared fixed" — and it was right, including the
+   mechanism.
 
 2. **Make failures exist.** ~~Push contexts toward the feasibility ceiling;
    finer depth grid; a weaker model.~~ **Largely done, and the ordering in this
@@ -888,12 +891,14 @@ Reordered around the pivot. Items 1–3 come before the tokenizer fix because
 each is either a precondition for it being measurable or a precondition for
 having anything to diagnose.
 
-1. **Grow the multi-hop failure corpus (JOURNAL J-031).** The mechanism is
-   built and it produces failures at 4k. What is missing is *n*: the target is
-   ≥50 failing cases spanning ≥3 modes, and the first run has 2 spanning 1. Run
-   the depth × k × hop grid, then a second model, then hand-label a sample.
-   **This is now the shortest path to a testable taxonomy**, and it is ahead of
-   the distractor family because it is where failures actually appeared.
+1. **Run the rotated multi-hop grid (D-024).** The rotation axis is built and
+   the Latin square is verified, but it has **never been run**. It answers the
+   biggest open question in the only real failure corpus: is the 80%-at-rank-2
+   effect positional, or is it about Kingsley? Until it runs, every reading of
+   J-032's rank paragraph is one of three.
+
+   Then a second model, then hand-label a sample. Target is ≥50 failing cases
+   spanning ≥3 modes; the current corpus has 16 spanning 2.
 
 2. **Run `NIAH_distractor` at all, starting with k=0.** It is built and has
    never been executed. The k=0 cell is D-023's calibration — until it runs,

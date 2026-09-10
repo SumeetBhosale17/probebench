@@ -1660,3 +1660,98 @@ make **every** cross-arm comparison in both new families unreportable and is the
 single most important number to get early.
 
 **What we got.** not yet.
+
+---
+
+## D-024 — Permute the registry so rank and subject identity vary independently
+Status: accepted
+Decided: 2026-09-10 | Trigger: J-032 | Changes what is measured: **yes**
+
+**The problem.** J-032's largest effect is one nothing predicted: *which
+registry entry the pointer names*. Rank 2 fails **80% at k=4 and 80% at k=8**,
+at realised document depths of 0.685 and 0.314 — same rank, very different
+position, identical failure rate. So it is not a position effect.
+
+It is also not interpretable, because the registry is built in file order and
+rank 2 is therefore **always Kingsley**. Three explanations fit the data equally
+well and the design cannot separate them:
+
+1. a middle-of-registry effect — ranks 0 and 3 are endpoints and both are easy,
+   which is what primacy plus recency looks like;
+2. a property of the token `Kingsley`;
+3. a property of its value `ZBF-2094-HW`, the only planted code starting with Z.
+
+Leaving it is not an option: it is the biggest effect in the project's only real
+failure corpus, and every interpretation of that corpus depends on which of the
+three is true.
+
+**Options.**
+
+*A — Rotate the whole needle file before slicing.* `needles[r:] + needles[:r]`,
+then take k. One line. Changes which subject holds each rank — and also changes
+the **set** of subjects in the registry, so subject set and rank move together
+and the confound is replaced rather than removed.
+
+*B — Fix the k-subset, cyclically rotate its order.* Registry stays
+`needles[:k]`; rotation r assigns that fixed set to the depth slots starting at
+offset r. Across k rotations every subject occupies every rank **exactly once** —
+a Latin square. Subject set is held constant by construction, so rank is the only
+thing moving.
+
+*C — Random permutation with a recorded seed.* Maximum coverage of the
+permutation space, and reproducible via the seed. Costs balance: with the case
+counts we can afford, a random draw does not guarantee each subject visits each
+rank, so a residual imbalance would have to be modelled rather than designed
+away. §1.4 (no repeats) means we cannot buy our way out of that with n.
+
+**Decision.** B. The deciding property is **balance at the n we can actually
+run**, not coverage. A Latin square makes "rank" and "subject" orthogonal by
+construction, so the contrast is a subtraction rather than a regression — which
+matters because §1.3 (no seed control) and §1.4 (no repeats) mean we have no
+error bars to model a residual imbalance against.
+
+C is the right answer at large n and is unavailable for the same reason D-022's
+option C was: balancing costs repeats we do not have.
+
+**Two consequences that fell out, both good, neither designed for.**
+
+`case_key` and `case_fingerprint` **need no change**. The key already carries
+`b{digest}` over the `(id, depth)` pairs, and rotation is exactly a change to
+which id sits at which depth — so the digest already distinguishes rotations,
+verified directly. Rotation was a distinct design point in the identity scheme
+before it was one in the code, which is what pre-registering `distractors` in
+D-012 was for.
+
+**Rotation 0 reproduces the current layout exactly**, so J-032's 50 archived
+records stay joinable and become the r=0 stratum of the new design rather than a
+superseded run.
+
+**Also decided here: sweep the hop over the fixed subject SET, not over the
+rotated list.** The old code took `registry[:needles_per_configuration]`, so
+rotating would have changed *which subjects get tested as hops* at the same time
+as it changed their ranks — reintroducing the confound in a subtler form. The
+target set is now taken before rotation and is invariant to it.
+
+**Rejected.**
+- *A, rotate the file.* `Revisit if:` never on these grounds; it moves the
+  confound rather than removing it.
+- *C, random with a seed.* `Revisit if:` §1.3 and §1.4 are closed. With seeds
+  and repeats, random permutation dominates — it covers the space a Latin square
+  samples on the diagonal.
+
+**What this changes about what is measured.** The grid gains an axis:
+(length × depth × k × **rotation** × hop). At k=4 with full balance that is 4x
+the cases. Registry layout is now a *controlled variable* rather than a constant,
+which means **J-032's rank figures describe one layout and are not general** —
+they are the r=0 cell of a design that did not exist when they were measured.
+
+**Predicted.** The 80%-at-rank-2 effect **follows the rank, not Kingsley**. If it
+does, the reading is positional and the mechanism is about where in a list the
+model looks. If it follows Kingsley across rotations, the effect is lexical and
+the uniform-template argument of D-022 is incomplete — needles can be uniform in
+wording, token count and shape and still differ in difficulty, which would be a
+more interesting and more inconvenient result. A third outcome — the effect
+disappearing under rotation — would mean it was an artifact of the single fixed
+layout, and J-032's rank paragraph should be withdrawn.
+
+**What we got.** not yet.

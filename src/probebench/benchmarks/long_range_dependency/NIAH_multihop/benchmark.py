@@ -42,6 +42,23 @@ from probebench.core.tokenizer import Tokenizer
 logger = logging.getLogger(__name__)
 
 
+def rotate(needles: list[KeyedNeedle], offset: int) -> list[KeyedNeedle]:
+    """Cyclically shift a registry layout by `offset` slots.
+
+    The set is preserved and only the order changes, which is what makes rank
+    and subject identity orthogonal across a full sweep (D-024). Rotating the
+    needle FILE instead would change the set too, replacing the confound rather
+    than removing it.
+    """
+
+    if not needles:
+        return []
+
+    offset %= len(needles)
+
+    return needles[offset:] + needles[:offset]
+
+
 class NiahMultihopBenchmark:
     """Generate two-hop cases over (length x pointer depth x registry size x hop)."""
 
@@ -58,6 +75,7 @@ class NiahMultihopBenchmark:
         registry_sizes: tuple[int, ...],
         pointer_subject: str,
         system_prompt: str,
+        max_registry_rotations: int = 1,
         needles_per_configuration: int = 5,
         context_buffer_tokens: int = 512,
         max_context_tokens: int | None = None,
@@ -75,6 +93,7 @@ class NiahMultihopBenchmark:
         self.target_tokens = target_tokens
         self.depths = depths
         self.registry_sizes = registry_sizes
+        self.max_registry_rotations = max_registry_rotations
 
         self.pointer_subject = pointer_subject
         self.system_prompt = system_prompt
@@ -116,23 +135,30 @@ class NiahMultihopBenchmark:
         for target_tokens in self.target_tokens:
             for depth in self.depths:
                 for k in self.registry_sizes:
-                    registry = needles[:k]
+                    subjects = needles[:k]
 
-                    # The hop is swept over the registry, so which SLOT holds the
-                    # answer varies across the sweep for free. Without that, a
-                    # positional bias in the registry would be invisible - every
-                    # answer would sit in the same place.
-                    for target in registry[: self.needles_per_configuration]:
-                        case = self._build_case(
-                            encoded_filler=encoded_filler,
-                            registry=registry,
-                            target=target,
-                            target_tokens=target_tokens,
-                            depth=depth,
-                        )
+                    # Taken BEFORE rotation, and deliberately so (D-024). The
+                    # old code sliced the rotated list, which would have changed
+                    # which subjects are tested as hops at the same time as it
+                    # changed their ranks - reintroducing the confound rotation
+                    # exists to remove, in a form harder to notice.
+                    targets = subjects[: self.needles_per_configuration]
 
-                        if case is not None:
-                            cases.append(case)
+                    for rotation in range(min(k, self.max_registry_rotations)):
+                        registry = rotate(subjects, rotation)
+
+                        for target in targets:
+                            case = self._build_case(
+                                encoded_filler=encoded_filler,
+                                registry=registry,
+                                target=target,
+                                target_tokens=target_tokens,
+                                depth=depth,
+                                rotation=rotation,
+                            )
+
+                            if case is not None:
+                                cases.append(case)
 
         return cases
 
@@ -143,6 +169,7 @@ class NiahMultihopBenchmark:
         target: KeyedNeedle,
         target_tokens: int,
         depth: float,
+        rotation: int = 0,
     ) -> BenchmarkCase | None:
         k = len(registry)
 
@@ -230,7 +257,7 @@ class NiahMultihopBenchmark:
         pointer_block = next(b for b in haystack.blocks if b.role == "pointer")
 
         return BenchmarkCase(
-            case_id=f"niahmh_{target_tokens}_{depth:.2f}_k{k}_{target.id}",
+            case_id=f"niahmh_{target_tokens}_{depth:.2f}_k{k}_r{rotation}_{target.id}",
             benchmark=self.benchmark_family,
             prompt=prompt,
             expected=target.value,
@@ -248,6 +275,13 @@ class NiahMultihopBenchmark:
                 "pointer_subject": self.pointer_subject,
                 "target_id": target.id,
                 "target_subject": target.subject,
+                # The two axes D-024 exists to separate, recorded explicitly so
+                # an analysis subtracts rather than re-derives them. `target_rank`
+                # is the position of the answer's entry in the registry; under
+                # rotation it moves while `target_id` is held fixed, which is the
+                # whole design.
+                "registry_rotation": rotation,
+                "target_rank": registry.index(target),
                 "case_key": build_case_key(
                     target_tokens=target_tokens,
                     depth=depth,

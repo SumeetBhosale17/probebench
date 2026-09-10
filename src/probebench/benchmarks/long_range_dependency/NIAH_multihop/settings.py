@@ -30,6 +30,23 @@ class NiahMultihopParams(StrictSection):
 
     pointer_subject: str = POINTER_SUBJECT
 
+    # How many cyclic rotations of the registry to sweep (D-024).
+    #
+    # Rotation r assigns the SAME k subjects to the depth slots starting at
+    # offset r, so across k rotations every subject occupies every rank exactly
+    # once - a Latin square, which makes rank and subject identity orthogonal by
+    # construction. That is what J-032 could not do: its registry was file-order
+    # only, so rank 2 was always Kingsley and its 80% failure rate had three
+    # equally good explanations.
+    #
+    # Capped rather than always-k because a full square at k=8 is 8x the cases.
+    # 4 rotations of an 8-registry still has every subject visiting 4 distinct
+    # ranks, which separates the hypotheses; it just does not balance them.
+    #
+    # r=0 reproduces the pre-D-024 layout exactly, so the 50 archived multi-hop
+    # records remain joinable and become the r=0 stratum rather than dead data.
+    max_registry_rotations: int = 4
+
     system_prompt: str = (
         "You are a precise extraction engine. "
         "The text contains access codes for several different locations, and "

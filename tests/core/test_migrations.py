@@ -318,3 +318,110 @@ def test_no_archived_record_gains_an_inventory() -> None:
             checked += 1
 
     assert checked > 0, "a test that checked zero records would pass forever"
+
+
+def test_1_5_to_1_6_does_not_infer_a_rank_it_could_compute() -> None:
+    """The sharper version of the 1.4->1.5 guard.
+
+    A 1.5 multi-hop record carries `needle_inventory` in document order with
+    roles, so the target's rank IS recoverable here - unlike the inventory at
+    1.5, which was not. It is still left absent: a computed value and a recorded
+    one would be indistinguishable in the archive, and rank is cheap to derive at
+    analysis time where the derivation is visible.
+    """
+
+    record = {
+        "schema_version": "1.5",
+        "case": {
+            "experiment": "needle_in_a_haystack_multihop",
+            "registry_size": 4,
+            "target_id": "kingsley",
+            "needle_inventory": [
+                {"block_id": "brightwater", "role": "distractor", "document_index": 0},
+                {"block_id": "kingsley", "role": "target", "document_index": 1},
+                {"block_id": "pointer", "role": "pointer", "document_index": 2},
+            ],
+        },
+    }
+
+    migrated = migrate_record(record)
+
+    assert migrated["schema_version"] == CURRENT_SCHEMA_VERSION
+    assert "target_rank" not in migrated["case"]
+
+    # Every archived record WAS built at rotation 0, but nothing in the record
+    # says so. Writing 0 would assert a fact the record does not carry.
+    assert "registry_rotation" not in migrated["case"]
+
+
+# Blocks that are legitimately absent on older records rather than a shape
+# defect. `host` postdates D-013 and there is no honest value for a machine
+# nobody recorded - synthesising one is what invariant 8 forbids.
+OPTIONAL_BLOCKS = {"host"}
+
+
+def test_migration_produces_one_shape_not_just_one_version() -> None:
+    """The property the version number is supposed to certify.
+
+    `test_every_archived_record_migrates` asserts every record reaches
+    CURRENT_SCHEMA_VERSION and passed happily while THREE distinct top-level
+    shapes all declared it (J-033) - a test that checked the label and not the
+    thing the label describes. 24 records had `model` as a bare string, and the
+    first consumer written against the current layout crashed on them.
+    """
+
+    if not RAW_RESULTS.is_dir():
+        pytest.skip("no archived results present")
+
+    shapes: set[tuple[str, ...]] = set()
+    checked = 0
+
+    for path in sorted(RAW_RESULTS.glob("*.jsonl")):
+        for line in path.read_text(encoding="utf-8").splitlines():
+            if not line.strip():
+                continue
+
+            migrated = migrate_record(json.loads(line))
+
+            assert isinstance(migrated["model"], dict), path.name
+            assert isinstance(migrated["run"], dict), path.name
+
+            shapes.add(tuple(sorted(set(migrated) - OPTIONAL_BLOCKS)))
+            checked += 1
+
+    assert checked > 0
+    assert len(shapes) == 1, f"{len(shapes)} distinct shapes survive migration: {shapes}"
+
+
+def test_shape_normalisation_is_idempotent() -> None:
+    """It runs on every read, including records already in the current layout."""
+
+    record = {
+        "schema_version": "1.0",
+        "model": "qwen3:4b",
+        "run": {
+            "run_id": "abc",
+            "benchmark": "long_range_dependency",
+            "experiment": "NIAH",
+            "generation_model": "qwen3:4b",
+            "model_family": "qwen3",
+            "tokenizer": {"provider": "tiktoken", "name": "cl100k_base"},
+            "judge": {"enabled": True, "model": "qwen3:4b"},
+        },
+        "case": {"needle": "x", "target_tokens": 4000, "depth": 0.5},
+    }
+
+    once = migrate_record(record)
+    twice = migrate_record(dict(once))
+
+    assert once == twice
+    assert once["model"]["name"] == "qwen3:4b"
+    assert once["model"]["family"] == "qwen3"
+    assert once["tokenization"] == {"provider": "tiktoken", "name": "cl100k_base"}
+    assert once["evaluation"]["judge"]["model"] == "qwen3:4b"
+
+    # run keeps only what identifies the run; the rest MOVED, not copied.
+    assert set(once["run"]) == {"run_id", "benchmark", "experiment"}
+
+    # host is not synthesised for a run that predates D-013.
+    assert "host" not in once

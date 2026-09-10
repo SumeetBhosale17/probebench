@@ -2496,3 +2496,105 @@ rediscovered later and mistaken for a law.
 
 **Disposition.** publishable, jointly with J-031 — a mechanism, a graded curve,
 a confound stated rather than hidden, and a self-correction at larger n.
+
+---
+
+## J-033 — The migration chain normalises the version number and not the shape: three shapes now declare "1.6"
+Status: open | Disposition: limitation
+
+Found in the first five minutes of using `reporting/load.py` — the module whose
+entire purpose is reading the archive as one table. It crashed on line 3.
+
+```
+AttributeError: 'str' object has no attribute 'get'
+  model=record.get("model", {}).get("name", "unknown"),
+```
+
+**Observed.** After running every archived record through `migrate_record`, so
+that all 658 declare `schema_version == "1.6"`, the archive still contains
+**three distinct top-level shapes**:
+
+```
+distinct top-level key sets AFTER migration: 3
+   376 records: case evaluation evaluation_details generation metrics model response run schema_version tokenization
+   258 records: case evaluation evaluation_details generation host metrics model response run schema_version tokenization
+    24 records: case evaluation             generation metrics model response run schema_version
+
+field -> type, after migration:
+  model   dict   634
+  model   str     24    <-- same field, two types, same declared version
+```
+
+The 24 are the oldest runs — `07d9a7cc8d6b`, `55a05b8418e9`, `6c868540c282`,
+all `qwen3:4b`, all declaring `"1.0"` on disk. In that shape `model` is a bare
+string and the `run` block carries everything that later moved out of it:
+
+```json
+"model": "qwen3:4b",
+"run": {"run_id": "...", "generation_model": "qwen3:4b",
+        "tokenizer": {"provider": "tiktoken", "name": "cl100k_base"},
+        "judge": {"enabled": true, "model": "qwen3:4b"},
+        "model_family": "qwen3", "model_quantization": "Q4_K_M", ...}
+```
+
+**Expected.** That `migrate_record` produces *the current shape*. That is what
+`core/migrations.py`'s docstring says it does and what invariant 7 assumes when
+it requires a migration alongside every `to_record()` change.
+
+**Mechanism.** Understood, and it is a design error rather than a bug in any one
+migration. The chain is keyed on `(from_version, to_version)` and walks
+**declared versions**. `_migrate_1_0_to_1_1` adds the groundedness label and
+returns; it was written against one 1.0 shape, because at the time its author had
+one 1.0 shape in mind.
+
+But J-005 already established that **at least three different record shapes were
+written while the version string said "1.0"** — the version was not bumped when
+`to_record()` changed, twice. So "1.0" is not a shape, it is a period of time.
+A chain that dispatches on it cannot normalise what it cannot distinguish, and
+J-005's own conclusion said so: *migrations must detect shape by field presence,
+not by declared version.* That instruction was written down and then not
+implemented; the chain that got built dispatches on version alone.
+
+The result is the failure mode J-005 named, one level up: **three shapes now
+declare "1.6" instead of three shapes declaring "1.0".** Migration moved the
+problem without touching it, and made it harder to see, because a reader now has
+a version number that looks authoritative.
+
+**Validated.** Reproducible over the whole archive:
+
+```python
+{tuple(sorted(migrate_record(r).keys())) for r in every_archived_record}
+# -> 3 distinct key sets, all with schema_version "1.6"
+```
+
+Every consumer written against the current shape breaks on those 24 records.
+`reporting/load.py` is the first consumer, which is why it surfaced now and not
+in the ten months those records have been on disk.
+
+**Implies.** Four things.
+
+1. **§5.2 is not repaid.** It is marked MAJOR and describes the version not being
+   bumped. The deeper defect is that the *remedy* — the migration chain — does not
+   remedy it. CLAUDE.md's build order says step 1 is "the first real consumer of
+   `core/migrations.py`, which is what forces §5.2 to be repaid properly rather
+   than declared fixed". That prediction was exactly right, including the timing.
+
+2. **`test_every_archived_record_migrates` passes and is too weak.** It asserts
+   that every record reaches `CURRENT_SCHEMA_VERSION`. It never asserts that they
+   reach the same *shape*, which is the property the version is supposed to
+   certify. A test that checks the label and not the thing the label describes.
+
+3. **The fix belongs in migrations, not in the loader.** Defending against this in
+   `_to_row` would put shape knowledge in every future consumer and let the archive
+   stay heterogeneous. All the information needed is present in those records —
+   `run.generation_model`, `run.tokenizer`, `run.judge` — so normalising is a pure
+   restructuring of data the record already carries. It computes an identity, not
+   a verdict, which is the line migrations may not cross.
+
+4. **It needs a shape probe, not another version step.** Adding `("1.6","1.7")`
+   would not help: these records will arrive at 1.7 in the same three shapes. The
+   chain needs a normalisation keyed on field presence that runs before the version
+   walk.
+
+**Disposition.** limitation — folds into §5.2, which should be rewritten rather
+than a new entry opened, since this is the same defect at its root.

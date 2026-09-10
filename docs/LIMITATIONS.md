@@ -842,19 +842,69 @@ The CLI prints its own inline summary table instead. There is currently no
 command that produces the Markdown report, no `probebench report`
 subcommand, and no aggregation across runs.
 
-### 5.2 Result schema version was not bumped — MAJOR
+### 5.2 The version number was not bumped, and the chain that fixed it did not fix the shape — MAJOR
 
-`status` and `error` were added to `BenchmarkResult.to_record()` while
-`CURRENT_SCHEMA_VERSION` remained `"1.0"`. Records written before and after
-this change both claim schema `1.0` but have different shapes.
+**Rewritten 2026-09-10 (J-033).** The original entry described a missing
+version bump and prescribed a migration. Both halves happened. The defect
+survived both, one level up, and the rewrite is the entry — the surface
+symptom moved and the root cause did not.
 
-`core/migrations.py` exists with an empty `MIGRATIONS` map, so the
-infrastructure to handle this is present but unused.
+**As originally recorded.** `status` and `error` were added to
+`to_record()` while `CURRENT_SCHEMA_VERSION` stayed `"1.0"`. Records written
+before and after both claimed `1.0` and had different shapes. J-005 then found
+this happened **more than once**: at least three distinct shapes were written
+while the version string said `1.0`. So `"1.0"` is not a shape, it is a period
+of time.
 
-Fix: bump to `"1.1"`, add `"1.1"` to `SUPPORTED_SCHEMA_VERSIONS`, and
-register a `("1.0", "1.1")` migration that injects
-`status="ok", error=None`. The four pre-existing files in `results/raw/`
-are schema-1.0-without-status and will need it.
+**What was built.** A migration chain, 1.0 → 1.6, tested over every archived
+file, with `test_every_archived_record_migrates` asserting each record reaches
+the current version.
+
+**Why that did not close it.** The chain dispatches on
+`(from_version, to_version)`. It walks *declared versions*, so it cannot
+distinguish shapes that share one — which is exactly the situation J-005
+documented and whose own conclusion said *migrations must detect shape by field
+presence, not by declared version*. That instruction was written down and not
+implemented.
+
+Measured after migration, with every record declaring `1.6`:
+
+```
+distinct top-level key sets: 3
+  376 records: case evaluation evaluation_details generation metrics model response run schema_version tokenization
+  258 records: + host
+   24 records: case evaluation generation metrics model response run schema_version
+
+model -> dict  634
+model -> str    24     same field, two types, same declared version
+```
+
+The test passed throughout, because it checked the label rather than the thing
+the label certifies.
+
+**Consequence.** Every consumer written against the current shape breaks on
+those 24 records. `reporting/load.py` — the first such consumer, ten months
+later — crashed on its third line. Until 2026-09-10 no code had ever read the
+archive as one table, which is why the defect was invisible rather than absent.
+
+**Current state.** `normalise_shape()` runs *before* the version walk and is
+keyed on field presence (`model` is a `str`). The archive now migrates to **one
+shape**, modulo `host`, which is honestly absent on runs predating D-013 and is
+not synthesised (invariant 8). `test_migration_produces_one_shape_not_just_one_version`
+asserts the shape, and `test_shape_normalisation_is_idempotent` covers the
+no-op path.
+
+One wrong turn is worth recording: the first probe was "`model` is not a dict",
+which fired on any record lacking a `model` key and *fabricated* one — the exact
+behaviour `normalise_shape` documents itself as never doing. Caught by an
+existing test on a minimal stub, not by review.
+
+Severity stays MAJOR until `reporting/load.py` has been used for a real
+cross-run claim. A shape defect that took ten months and a new consumer to
+surface is not one to declare closed on the strength of a green test suite.
+
+Removal condition: a cross-run analysis has actually been produced from the
+loader, and the shape assertion has survived at least one further schema bump.
 
 ### 5.3 Test coverage does not reach the load-bearing logic — MAJOR
 

@@ -237,6 +237,7 @@ def _multihop_cases(tokenizer, **overrides):
         filler_path=params.filler_path,
         needles_path=params.needles_path,
         registry_sizes=overrides.pop("registry_sizes", (2, 4, 8)),
+        max_registry_rotations=overrides.pop("max_registry_rotations", 1),
         pointer_subject=params.pointer_subject,
         system_prompt=params.system_prompt,
         tokenizer=tokenizer,
@@ -310,3 +311,85 @@ def test_a_pointer_subject_with_its_own_entry_raises(tokenizer) -> None:
 
     with pytest.raises(ValueError, match="also has a registry entry"):
         benchmark.cases_as_generic()
+
+
+# ---------------------------------------------------------------------------
+# D-024: rank and subject identity must be separable
+# ---------------------------------------------------------------------------
+
+
+def test_rotation_makes_every_subject_visit_every_rank(tokenizer) -> None:
+    """The Latin square. Without it, "rank 2 is hard" and "Kingsley is hard"
+    are the same hypothesis (J-032)."""
+
+    from collections import defaultdict
+
+    cases = _multihop_cases(
+        tokenizer,
+        registry_sizes=(4,),
+        needles_per_configuration=4,
+        max_registry_rotations=4,
+    )
+
+    ranks_by_subject = defaultdict(set)
+    subjects_by_rank = defaultdict(set)
+
+    for case in cases:
+        subject = case.metadata["target_subject"]
+        rank = case.metadata["target_rank"]
+        ranks_by_subject[subject].add(rank)
+        subjects_by_rank[rank].add(subject)
+
+    assert len(ranks_by_subject) == 4
+
+    for subject, ranks in ranks_by_subject.items():
+        assert sorted(ranks) == [0, 1, 2, 3], (subject, ranks)
+
+    for rank, subjects in subjects_by_rank.items():
+        assert len(subjects) == 4, (rank, subjects)
+
+
+def test_rotation_preserves_the_subject_set(tokenizer) -> None:
+    """Rotating the FILE would change the set too, replacing the confound
+    rather than removing it (D-024 option A)."""
+
+    cases = _multihop_cases(
+        tokenizer, registry_sizes=(4,), needles_per_configuration=1, max_registry_rotations=4
+    )
+
+    sets = {
+        frozenset(b["block_id"] for b in c.metadata["needle_inventory"] if b["role"] != "pointer")
+        for c in cases
+    }
+
+    assert len(sets) == 1, f"the registry set changed across rotations: {sets}"
+
+
+def test_rotation_zero_is_the_pre_d024_layout(tokenizer) -> None:
+    """J-032's 50 records must stay joinable as the r=0 stratum."""
+
+    cases = _multihop_cases(
+        tokenizer, registry_sizes=(4,), needles_per_configuration=4, max_registry_rotations=4
+    )
+
+    zero = [c for c in cases if c.metadata["registry_rotation"] == 0]
+
+    assert len(zero) == 4
+
+    # File order: brightwater, ashford, kingsley, stonegate.
+    ranks = {c.metadata["target_id"]: c.metadata["target_rank"] for c in zero}
+
+    assert ranks == {"brightwater": 0, "ashford": 1, "kingsley": 2, "stonegate": 3}
+
+
+def test_each_rotation_is_a_distinct_case_key(tokenizer) -> None:
+    """The existing key already hashes (id, depth) pairs, so a rotation is
+    already a distinct design point - no key format change was needed."""
+
+    cases = _multihop_cases(
+        tokenizer, registry_sizes=(4,), needles_per_configuration=1, max_registry_rotations=4
+    )
+
+    keys = [c.metadata["case_key"] for c in cases]
+
+    assert len(set(keys)) == len(keys) == 4
