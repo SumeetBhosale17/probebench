@@ -1,0 +1,37 @@
+context_tokens,depth,needle,predicted,success,latency_sec,context_tokens_binned
+2000,0.0,The secret access code is ALPHA-9921-X.,ALPHA-9921-X.,True,1.3570144176483154,2000.0
+2000,0.0,The magic word to unlock the door is CRIMSON-EAGLE-44.,CRIMSON-EAGLE-44,True,1.115417718887329,2000.0
+2000,0.0,Remember that the special key is 8829-BETA-Z.,8829-BETA-Z.,True,0.9875586032867432,2000.0
+2003,0.5,The secret access code is ALPHA-9921-X.,ALPHA-9921-X.,True,2.0326874256134033,2000.0
+2003,0.5,The magic word to unlock the door is CRIMSON-EAGLE-44.,CRIMSON-EAGLE-44.,True,0.8861086368560791,2000.0
+1999,0.5,Remember that the special key is 8829-BETA-Z.,8829-BETA-Z.,True,1.943737268447876,2000.0
+1999,1.0,The secret access code is ALPHA-9921-X.,ALPHA-9921-X,True,1.8817722797393799,2000.0
+2000,1.0,The magic word to unlock the door is CRIMSON-EAGLE-44.,CRIMSON-EAGLE-44,True,0.863227367401123,2000.0
+2000,1.0,Remember that the special key is 8829-BETA-Z.,8829-BETA-Z,True,0.6675701141357422,2000.0
+4000,0.0,The secret access code is ALPHA-9921-X.,ALPHA-9921-X,True,3.0772881507873535,4000.0
+4000,0.0,The magic word to unlock the door is CRIMSON-EAGLE-44.,CRIMSON-EAGLE-44,True,3.280952215194702,4000.0
+4000,0.0,Remember that the special key is 8829-BETA-Z.,8829-BETA-Z,True,3.090367078781128,4000.0
+4001,0.5,The secret access code is ALPHA-9921-X.,ALPHA-9921-X.,True,3.2663023471832275,4000.0
+4000,0.5,The magic word to unlock the door is CRIMSON-EAGLE-44.,CRIMSON-EAGLE-44,True,3.1147353649139404,4000.0
+4000,0.5,Remember that the special key is 8829-BETA-Z.,8829-BETA-Z,True,2.886657238006592,4000.0
+4000,1.0,The secret access code is ALPHA-9921-X.,ALPHA-9921-X.,True,3.0444495677948,4000.0
+3999,1.0,The magic word to unlock the door is CRIMSON-EAGLE-44.,CRIMSON-EAGLE-44,True,0.9637491703033447,4000.0
+4000,1.0,Remember that the special key is 8829-BETA-Z.,8829-BETA-Z,True,0.7347877025604248,4000.0
+6000,0.0,The secret access code is ALPHA-9921-X.,ALPHA-9921-X,True,3.400473117828369,6000.0
+6000,0.0,The magic word to unlock the door is CRIMSON-EAGLE-44.,CRIMSON-EAGLE-44.,True,3.7483835220336914,6000.0
+6000,0.0,Remember that the special key is 8829-BETA-Z.,8829-BETA-Z,True,3.439378023147583,6000.0
+6000,0.5,The secret access code is ALPHA-9921-X.,ALPHA-9921-X.,True,4.793696403503418,6000.0
+6000,0.5,The magic word to unlock the door is CRIMSON-EAGLE-44.,CRIMSON-EAGLE-44.,True,4.709197044372559,6000.0
+6000,0.5,Remember that the special key is 8829-BETA-Z.,8829-BETA-Z.,True,4.43851375579834,6000.0
+6000,1.0,The secret access code is ALPHA-9921-X.,ALPHA-9921-X.,True,4.471932649612427,6000.0
+5999,1.0,The magic word to unlock the door is CRIMSON-EAGLE-44.,CRIMSON-EAGLE-44,True,1.0728552341461182,6000.0
+6000,1.0,Remember that the special key is 8829-BETA-Z.,8829-BETA-Z,True,0.8010885715484619,6000.0
+8000,0.0,The secret access code is ALPHA-9921-X.,ALPHA-9921-X.,True,3.8286046981811523,8000.0
+8000,0.0,The magic word to unlock the door is CRIMSON-EAGLE-44.,CRIMSON-EAGLE-44,True,4.0354084968566895,8000.0
+8000,0.0,Remember that the special key is 8829-BETA-Z.,8829-BETA-Z,True,3.809349536895752,8000.0
+8002,0.5,The secret access code is ALPHA-9921-X.,ALPHA-9921-X.,True,6.514726877212524,8000.0
+8001,0.5,The magic word to unlock the door is CRIMSON-EAGLE-44.,CRIMSON-EAGLE-44,True,6.175320625305176,8000.0
+7999,0.5,Remember that the special key is 8829-BETA-Z.,8829-BETA-Z,True,5.866722345352173,8000.0
+8000,1.0,The secret access code is ALPHA-9921-X.,ALPHA-9921-X,True,5.985774278640747,8000.0
+8000,1.0,The magic word to unlock the door is CRIMSON-EAGLE-44.,CRIMSON-EAGLE-44,True,1.2407162189483643,8000.0
+8000,1.0,Remember that the special key is 8829-BETA-Z.,8829-BETA-Z,True,0.9175164699554443,8000.0

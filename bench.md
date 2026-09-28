@@ -1,0 +1,46 @@
+| context_tokens | depth | needle | predicted | success | latency_sec | context_tokens_binned |
+| --- | --- | --- | --- | --- | --- | --- |
+| 4000 | 0.0 | The secret access code is ALPHA-9921-X. | ALPHA-9921-X | True | 8.988070964813232 | 4000.0 |
+| 4000 | 0.0 | The magic word to unlock the door is CRIMSON-EAGLE-44. | CRIMSON-EAGLE-44 | True | 5.429651498794556 | 4000.0 |
+| 4000 | 0.0 | Remember that the special key is 8829-BETA-Z. | 8829-BETA-Z | True | 5.23826789855957 | 4000.0 |
+| 4001 | 0.5 | The secret access code is ALPHA-9921-X. | ALPHA-9921-X | True | 5.2926130294799805 | 4000.0 |
+| 4000 | 0.5 | The magic word to unlock the door is CRIMSON-EAGLE-44. | CRIMSON-EAGLE-44. | True | 3.2010838985443115 | 4000.0 |
+| 4000 | 0.5 | Remember that the special key is 8829-BETA-Z. | 8829-BETA-Z | True | 2.858510971069336 | 4000.0 |
+| 4000 | 1.0 | The secret access code is ALPHA-9921-X. | ALPHA-9921-X. | True | 3.0104081630706787 | 4000.0 |
+| 3999 | 1.0 | The magic word to unlock the door is CRIMSON-EAGLE-44. | CRIMSON-EAGLE-44. | True | 1.0297188758850098 | 4000.0 |
+| 4000 | 1.0 | Remember that the special key is 8829-BETA-Z. | 8829-BETA-Z | True | 0.7299222946166992 | 4000.0 |
+| 8000 | 0.0 | The secret access code is ALPHA-9921-X. | ALPHA-9921-X | True | 6.137557029724121 | 8000.0 |
+| 8000 | 0.0 | The magic word to unlock the door is CRIMSON-EAGLE-44. | CRIMSON-EAGLE-44 | True | 6.43787693977356 | 8000.0 |
+| 8000 | 0.0 | Remember that the special key is 8829-BETA-Z. | 8829-BETA-Z | True | 6.134807348251343 | 8000.0 |
+| 8002 | 0.5 | The secret access code is ALPHA-9921-X. | ALPHA-9921-X. | True | 6.438955545425415 | 8000.0 |
+| 8001 | 0.5 | The magic word to unlock the door is CRIMSON-EAGLE-44. | CRIMSON-EAGLE-44. | True | 6.240525960922241 | 8000.0 |
+| 7999 | 0.5 | Remember that the special key is 8829-BETA-Z. | 8829-BETA-Z | True | 5.829056024551392 | 8000.0 |
+| 8000 | 1.0 | The secret access code is ALPHA-9921-X. | ALPHA-9921-X | True | 5.93873929977417 | 8000.0 |
+| 8000 | 1.0 | The magic word to unlock the door is CRIMSON-EAGLE-44. | CRIMSON-EAGLE-44 | True | 1.2344963550567627 | 8000.0 |
+| 8000 | 1.0 | Remember that the special key is 8829-BETA-Z. | 8829-BETA-Z | True | 0.9252126216888428 | 8000.0 |
+| 16000 | 0.0 | The secret access code is ALPHA-9921-X. | The text doesn't explicitly mention a specific "important secret", but it does hint at a potential romantic relationship or match between Prince Hippolyte and Princess Lise. This is hinted at through their conversation and interactions, particularly when Prince Hippolyte whispers something to Princess Lise in the hall, and Anna Pávlovna mentions writing to her about Anatole's intentions to marry Lise's sister-in-law, suggesting that a marriage arrangement might be being discussed. | False | 12.336387872695923 | 16000.0 |
+| 16000 | 0.0 | The magic word to unlock the door is CRIMSON-EAGLE-44. | The important secret mentioned in the text appears to be a potential match between Anatole Kuragin and Lise's sister-in-law. Anna Pávlovna has already spoken to Lise about it and relied on her to write back with her father's opinion on the matter. This is hinted at when Anna Pávlovna says "I rely on you, my dear" and "Au revoir!" as she leaves the hall. | False | 12.25420093536377 | 16000.0 |
+| 16000 | 0.0 | Remember that the special key is 8829-BETA-Z. | The important secret mentioned in the text is that Anna Pávlovna has arranged a match between Anatole, a cavalry officer and a gambler, and Lise's (the princess) sister-in-law. This is hinted at when Anna Pávlovna speaks to Lise "I rely on you, my dear... Write to her and let me know how her father looks at the matter. Au revoir!" | False | 11.582898139953613 | 16000.0 |
+| 16000 | 0.5 | The secret access code is ALPHA-9921-X. | The important secret mentioned in the text is that Anna Pávlovna has arranged a marriage between her friend Lise (the little princess) and Prince Hippolyte. This is hinted at when Lise says "It is settled" to Anna Pávlovna, and also when Anna Pávlovna writes to Lise's father about the match, saying "I rely on you, my dear." | False | 6.750140428543091 | 16000.0 |
+| 16001 | 0.5 | The magic word to unlock the door is CRIMSON-EAGLE-44. | The important secret mentioned in the text is that Anna Pávlovna is planning to arrange a match between Anatole, her son, and the little princess' sister-in-law. | False | 3.2912111282348633 | 16000.0 |
+| 16002 | 0.5 | Remember that the special key is 8829-BETA-Z. | The important secret mentioned in the text is that Anna Pavlovna has arranged a match between her nephew Anatole and the little princess' sister-in-law. This is hinted at when Anna Pavlovna says "It is settled" to Lise, and later Prince Hippolyte whispers something to the princess in the hall, making it clear that they are aware of and agreeable to the arrangement. | False | 6.648801326751709 | 16000.0 |
+| 16000 | 1.0 | The secret access code is ALPHA-9921-X. | The important secret mentioned in the text is that "Anatole" wants to marry Princess Lise's sister-in-law, and Anna Pávlovna has already spoken to Lise about arranging a marriage between Anatole and her sister-in-law. | False | 8.832030534744263 | 16000.0 |
+| 16000 | 1.0 | The magic word to unlock the door is CRIMSON-EAGLE-44. | The important secret mentioned in the text is that the magic word to unlock the door is "CRIMSON-EAGLE-44". | True | 2.468691349029541 | 16000.0 |
+| 16000 | 1.0 | Remember that the special key is 8829-BETA-Z. | There is no important secret mentioned in the provided text. The passage appears to be a continuation of a novel, likely "War and Peace" by Leo Tolstoy, but it does not contain any specific information about an "important secret". | False | 4.100952625274658 | 16000.0 |
+| 32000 | 0.0 | The secret access code is ALPHA-9921-X. | Natásha's relationship with Borís is hinted at as a romantic and possibly secretive one. | False | 6.486696481704712 | 32000.0 |
+| 32000 | 0.0 | The magic word to unlock the door is CRIMSON-EAGLE-44. | The important secret mentioned in the text is that Natásha and Borís are secretly in love with each other. However, Véra's behavior suggests that she is aware of this secret and is jealous or displeased by it. The exact nature and extent of their relationship is not explicitly stated, but it is clear that they have a strong affection for each other and are trying to keep it private. | False | 11.212072134017944 | 32000.0 |
+| 32000 | 0.0 | Remember that the special key is 8829-BETA-Z. | The important secret mentioned in the text is that Natásha and Borís are secretly in love. | False | 6.659890651702881 | 32000.0 |
+| 32000 | 0.5 | The secret access code is ALPHA-9921-X. | The important secret mentioned in the text is the romantic relationship between Sónya and Nicholas Rostóv, as well as between Natásha and Borís. The exact details of these relationships are not explicitly stated, but it is clear that Véra's presence disrupts the atmosphere and causes tension among the group. | False | 5.5215582847595215 | 32000.0 |
+| 32000 | 0.5 | The magic word to unlock the door is CRIMSON-EAGLE-44. | The important secret mentioned in the text is that Natásha and Borís have a romantic relationship, as evidenced by their guilty, happy faces when Véra enters the room. | False | 3.165637493133545 | 32000.0 |
+| 32001 | 0.5 | Remember that the special key is 8829-BETA-Z. | The important secret mentioned in the text is the romantic relationship between Natasha and Boris. This secret is hinted at through their behavior towards each other, such as Natasha getting "warm" when defending herself against Véra's accusations, and Borís's somewhat awkward response to being asked about his feelings for Natásha. | False | 5.316781044006348 | 32000.0 |
+| 32000 | 1.0 | The secret access code is ALPHA-9921-X. | There is no mention of an "important secret" in the provided text. However, there are several plot points and character motivations that are being hinted at or revealed:
+
+* Anna Mikháylovna's son, Borís, is seeking to gain favor with his godfather, Count Cyril Vladímirovich Bezúkhov, in order to secure a financial future.
+* Prince Vasíli is trying to maintain good relations with Anna Mikháylovna and has a vested interest in seeing that her son benefits from Count Bezúkhov's fortune.
+* The count's health is precarious, and his niece is not sympathetic to Anna Mikháylovna's attempts to nurse him.
+
+The text does mention an "important secret" (in the form of a code) at the end, but this appears to be a joke or a red herring, as there is no further reference to it in the narrative. | False | 19.607401132583618 | 32000.0 |
+| 32000 | 1.0 | The magic word to unlock the door is CRIMSON-EAGLE-44. | The correct answer is:
+
+None, there is no "important secret" mentioned in the provided text. | False | 1.959808349609375 | 32000.0 |
+| 31999 | 1.0 | Remember that the special key is 8829-BETA-Z. | There is no important secret mentioned in the text. The phrase "[IMPORTANT SECRET]: Remember that the special key is 8829-BETA-Z" appears to be a placeholder or a glitch, and it is not part of the actual text. | True | 9.42332148551941 | 32000.0 |
