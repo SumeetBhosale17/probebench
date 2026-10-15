@@ -478,6 +478,41 @@ hops. The decoys *are* the experiment. And the pointer deliberately carries no
 value: putting the answer in it would let a single-hop read score as a two-hop
 one.
 
+### 3.17 Paired answerability — `long_context_understanding/negative_retrieval/`
+
+**What.** Tests whether a model returns a value supported by a long context or
+abstains when the queried entity is absent. Each design point creates a paired
+present/absent query against exactly the same context.
+
+**How.** A curated JSONL bank supplies answerable facts and absent-query
+entities. A context contains `fact_count` distinct answerable facts; one is
+placed at the swept depth and the rest at fixed background slots. The paired
+positive query asks for that placed fact. The paired negative query asks about
+an entity absent from both the context and the filler. The filler is extended
+deterministically from a fixed seed using administrative-record templates and
+fixed word lists, and its digest is part of each fingerprint. The builder
+records the assembled context token count and a 512-token-bucketed `num_ctx`,
+so the shared preflight and runner see the real requested context. The
+rule-tier evaluator gives credit only for an exact normalized value or
+abstention token. When enabled, the existing `OllamaJudge` adds a separate
+`llm_judge` score using the stored question, expected answer, and response; it
+does not receive the full context and groundedness checking is disabled for
+this family. Exact-output compliance and semantic judging therefore remain
+separate recorded signals.
+
+**Why.** Pairing holds the document constant while answerability changes, so
+the negative case is not told that evidence is missing. Distinct fact counts,
+balanced labels, deterministic text, and content-addressed identities make
+the construction auditable and replayable. The fact-count ceiling is eight
+because that is the current validated positive inventory; a 16-fact cell is
+rejected rather than built by repeating facts.
+
+**Measurement boundary.** This is a synthetic fact-retrieval and abstention
+task, not natural-document understanding. Its scores are not comparable with
+NIAH, keyed discrimination, or multi-hop results. A 4K model pilot exists
+(J-037, J-038), but no repeats, human-labeled judge validation, or
+evidence-ablation control have been run.
+
 ---
 
 ## 4. Verification evidence

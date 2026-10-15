@@ -2598,3 +2598,63 @@ in the ten months those records have been on disk.
 
 **Disposition.** limitation — folds into §5.2, which should be rewritten rather
 than a new entry opened, since this is the same defect at its root.
+
+## J-034 — 2026-10-14 — Negative retrieval dry run plans zero context and duplicates cases
+Status: open
+
+**Observed.** `uv run probebench run --benchmark long_context_understanding --experiment negative_retrieval --model qwen3:0.6b --dry-run --skip-health-check` generated 440 cases. The memory plan contained only context `0`, and the planned runner set was `[0]`. `uv run pytest tests/benchmarks/test_negative_retrieval.py -q` reported that the test file did not exist. The two commands and output were supplied in the session on 2026-10-14.
+**Expected.** A dry run should plan nonzero Ollama context buckets, and each planned case should represent a distinct, balanced present/absent query over a context containing the configured number of facts.
+**Mechanism.** `pipeline._case_num_ctx()` reads `case.metadata["model_options"]["num_ctx"]` and defaults to zero; the negative-retrieval builder supplied no `model_options`. `_generate_entity_set(count)` returns prefixes of the same ten records for counts 4, 8, and 16, while each built case contains only one fact. Its case ID omits count and answerability, so the prefixes create duplicate IDs. The absent branch inserts the sentence "The supplied document contains no matching record for this query." The proposed focused test was not created.
+**Validated.** The dry-run output reports `Generated 440 cases`, a memory-plan row for context `0`, and `Dry run: 440 cases planned across [0]`. The current builder, shared `_case_num_ctx()`, entity inventory, and `tests/benchmarks/` contents reproduce each mechanism.
+**Implies.** Do not treat this run as evidence about long-context behavior. Build paired answerable/unanswerable queries over the same multi-fact context, assign the real per-case `num_ctx`, and test unique identity, class balance, absent evidence, and the planned context bucket before any model run.
+**Disposition.** limitation — new benchmark's dry-run and answerability measurements are invalid until the case construction and preflight contract are tested.
+
+## J-035 — 2026-10-14 — Negative retrieval filler cannot reach the requested length
+Status: open
+
+**Observed.** The new focused test requested a 4,000-token case but measured only 155 tokens in the assembled context (`assert context_tokens >= 4_000` failed with `155`).
+**Expected.** A case configured for 4,000 tokens should contain approximately that many context tokens before the question and the `num_ctx` buffer.
+**Mechanism.** `build_haystack()` truncates the filler token sequence to the requested budget; it does not pad a short filler source. `data/long_context_understanding/negative_retrieval/filler_text.txt` contains only a short paragraph, so the benchmark emitted short contexts regardless of `target_tokens`.
+**Validated.** `uv run pytest tests/benchmarks/test_negative_retrieval.py -q` reproduced the 155-token context after the paired-case implementation. The configured source paragraph is the only filler input to `EncodedFiller.encode()`.
+**Implies.** The negative-retrieval family needs a deterministic background corpus long enough for the largest requested target. Reusing NIAH's War and Peace corpus would import a known semantic distractor and confound this family's controlled fact task.
+**Disposition.** limitation — length claims remain invalid until a deterministic adequate filler is generated and token counts are tested.
+
+## J-036 — 2026-10-14 — Positive answer facts are recoverable from model weights
+Status: open
+
+**Observed.** The current answerable records ask for familiar public facts, including Paris as France's capital, Titan as Saturn's largest moon, and India as the most populous country. The benchmark instructs the model not to use outside knowledge but does not observe which source produced a correct answer.
+**Expected.** A positive answer should provide evidence that the model used the supplied context, not only that it already knew the fact.
+**Mechanism.** Context presence is not causally identifiable from a correct response when the expected value is common parametric knowledge. The evaluator sees only the answer string and cannot tell whether it came from the prompt or model weights.
+**Validated.** The contents of `data/long_context_understanding/negative_retrieval/entities.jsonl` contain the listed public facts. No model run or context-ablation control has been performed.
+**Implies.** Replace familiar positive values with fixed, nonce-style synthetic identifiers and keep this family explicitly separate from natural-document understanding. A later validation run should compare paired contexts with and without the evidence before claiming context-grounded retrieval.
+**Disposition.** limitation — parametric-knowledge leakage remains until a nonce corpus and an evidence-ablation run establish the scope of the effect.
+
+## J-037 — 2026-10-15 — Strict prompt fixes abstention, not positive retrieval
+Status: open
+
+**Observed.** After the exact-output system and per-case answer contract were tightened, `uv run probebench run --benchmark long_context_understanding --experiment negative_retrieval --model qwen3:0.6b --target-tokens 4000 --skip-health-check --output-dir results/raw/quick_negative_retrieval_tight_prompt --yes` generated 40 cases. The exact rule scored **23/40**: 20/20 absent queries returned `NO_EVIDENCE_FOUND`, while only 3/20 present queries returned their exact nonce value. All responses had status `ok`.
+**Expected.** Stronger output instructions should reduce prose-format failures; whether they would improve retrieval was unknown.
+**Mechanism.** The instruction now reaches both system and user messages, and the absent answers show the model can follow the token contract for these cases. Most positive queries still receive abstention, so the remaining failure is not merely formatting. The underlying retrieval mechanism is not isolated by this run.
+**Validated.** `uv run pytest -q tests/benchmarks/test_negative_retrieval.py` passed 7 tests. The 40-row JSONL at `results/raw/quick_negative_retrieval_tight_prompt/raw/long_context_understanding_negative_retrieval_qwen3_0.6b_bd41b94deb6e.jsonl` contains the stated class counts and scores.
+**Implies.** Preserve `answerability_exact_match` and add a separately named semantic judge score so exact compliance and answer correctness under natural response forms remain distinguishable. Use an independent judge model for any claim; self-judging remains non-reportable (LIMITATIONS §1.2). The judge does not establish evidence grounding.
+**Disposition.** note — pilot result only; one target length, one model, no repeats, and no evidence-ablation control.
+
+## J-038 — 2026-10-15 — Independent judge agrees exactly with the rule on the 4K pilot
+Status: open
+
+**Observed.** `uv run probebench run --benchmark long_context_understanding --experiment negative_retrieval --model qwen3:0.6b --judge-model qwen3:4b --judge-context 4096 --target-tokens 4000 --output-dir results/raw/quick_negative_retrieval_with_judge --yes` completed 40 cases. The deterministic `answerability_exact_match` and independent `llm_judge` scores agreed on all 40: 22 had both scores at 1.0, 18 had both at 0.0, with zero disagreements. The exact metric was 3/20 on present cases and 19/20 on absent cases. All records had `status=ok`.
+**Expected.** The judge might give credit to semantically correct answers expressed in prose while preserving exact-format failures in the rule metric.
+**Mechanism.** The generation model returned exact abstention on 19 absent cases but exact nonce values on only three present cases. The judge did not identify any additional correct answers in this sample. This is agreement on one 40-case, one-length pilot, not evidence that the judge and rule are generally equivalent.
+**Validated.** The JSONL at `results/raw/quick_negative_retrieval_with_judge/raw/long_context_understanding_negative_retrieval_qwen3_0.6b_54c6c18eeebc.jsonl` stores both metrics on every row, with `evaluation.judge.model=qwen3:4b`; parsed metric-pair counts are `(1.0,1.0):22` and `(0.0,0.0):18`.
+**Implies.** The judge wiring works, but it added no signal in this pilot. Keep both metrics; do not replace the rule or claim the judge is validated. To test whether it can resolve prose-form correctness, evaluate a response set containing known correct paraphrases and known incorrect/hallucinated answers against human labels.
+**Disposition.** note — narrow pilot; no human-labeled judge-validity estimate and no evidence-grounding claim.
+
+## J-039 — 2026-10-15 — Judge matches the exact rule on the 4K/8K pilot
+Status: open
+
+**Observed.** The 80-case run at 4K and 8K produced 40/40 status `ok` at each target. `answerability_exact_match` totaled 38/80; `llm_judge` totaled 37.99/80. Metric pairs were `(1.0,1.0): 37`, `(0.0,0.0): 42`, and `(1.0,0.99): 1`; the only disagreement was an absent-query response `no evidence found`, which the exact rule accepted and the judge scored 0.99. Present cases scored 1/20 at 4K and 4/20 at 8K; absent cases scored 16/20 and 17/20 respectively.
+**Expected.** Compared with the earlier 40-case pilot, more cases could expose prose-correct outputs and reveal whether the judge adds semantic information.
+**Mechanism.** It did not in this run: no present-case disagreement or judge recovery occurred. The judge's only non-identical score was a near-perfect 0.99 for an abstention phrased with spaces rather than underscores. The model's present-answer rate remains low, and a judge given no full context cannot check evidence use.
+**Validated.** Parsed `results/negative_retrieval_4k_8k/raw/long_context_understanding_negative_retrieval_qwen3_0.6b_a46a1ab0866e.jsonl`: 80 records, 40 per target, independent judge `qwen3:4b`. Nominal contexts are 3,997–3,998 and 7,995–7,999 `cl100k_base` tokens; `prompt_eval_count` is 2,306 and 4,354 respectively.
+**Implies.** The judge remains a separate optional metric but has not shown incremental value. Preserve the exact rule; validate judge decisions against human labels containing prose-correct answers before interpreting its score. State both tokenizer counts when comparing length.
+**Disposition.** note — small pilot, no repeats, no human labels, and no evidence ablation.

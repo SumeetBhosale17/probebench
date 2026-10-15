@@ -593,6 +593,47 @@ recorded because the failure mode is *reading*, not measurement, and the records
 make the mistake easy. The reporting layer (§5.1) must refuse to pool distinct
 `run.experiment` values when it is resurrected.
 
+### 1.21 Positive answers may come from parametric knowledge — MAJOR
+
+The first `negative_retrieval` draft used familiar public facts: France's
+capital, Saturn's largest moon, the Apollo 11 landing year, and others. The
+prompt said to answer only from the supplied text, but the response and exact
+match evaluator could not establish whether a correct positive answer was read
+from the context or recalled from model weights (J-036). D-027 replaced that
+bank with nonce-style synthetic keys and values, making parametric recall much
+less plausible. That is mitigation, not proof: a correct response alone still
+cannot identify its source. A 4K pilot on the nonce bank exists (J-037, J-038),
+but it did not include an evidence-ablation control, so source use remains
+unverified.
+
+Removal condition: run a preregistered evidence-ablation control on the same
+nonce queries and contexts, compare present-evidence and removed-evidence
+responses, and report the positive-answer change. Until then, positive exact
+match measures answer accuracy under an evidence-only instruction, not proven
+use of evidence.
+
+### 1.22 The negative-retrieval judge is unvalidated and sees no evidence — MAJOR
+
+D-028 adds the existing `OllamaJudge` as an optional second signal for
+`negative_retrieval`. Its prompt receives the question, expected answer, and
+model response, but not the long context or planted fact inventory. It can
+judge answer agreement and abstention, but it **cannot** determine whether the
+answer was supported by the context. Calling its score `llm_judge` does not
+change that boundary.
+
+The only pilot is 40 cases at 4,000 tokens with generation `qwen3:0.6b` and
+judge `qwen3:4b` (J-038). The judge agreed exactly with the deterministic rule
+on all 40 cases. This gives no disagreement sample, no estimate of judge
+precision, and no evidence that its score adds information. The independent
+model avoids direct self-judging, but does not establish judge capacity or
+validity.
+
+Removal condition: compare the judge against human labels on a preregistered
+sample containing correct exact answers, correct prose answers, wrong values,
+unsupported guesses, and abstentions; report per-class agreement and errors.
+Evidence-grounding claims additionally require the evidence-ablation control
+in §1.21; this judge contract cannot satisfy it.
+
 ---
 
 ## 2. Memory model limitations

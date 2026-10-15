@@ -92,6 +92,21 @@ ask, not in how planting works.
 | `benchmark.py` | Pointer at the swept depth, registry on the background slots | The **pointer carries no value** — the whole task is that the answer is elsewhere, and putting it in the pointer would let a single-hop read score as a two-hop one. The answer's slot moves across the sweep, so a registry positional bias is visible rather than baked in |
 | `identity.py` | `niahmh/…` keys | The hop — *which* entry the pointer names — is a design point, so it is in both keys |
 
+## `benchmarks/long_context_understanding/negative_retrieval/` — answerability
+
+| File | What it does | Why it exists |
+|---|---|---|
+| `settings.py` | Fact-count grid, answer contract, and background insertion slots | The initial corpus has eight answerable facts, so the supported grid stops at eight rather than silently repeating facts |
+| `benchmark.py` | Builds multi-fact contexts and paired present/absent queries | Each pair shares identical context; only query and expected answer differ. Absent entities are excluded from both inserted facts and filler. `num_ctx` is bucketed and stored for the shared preflight and runner |
+
+## `evaluation/long_context_understanding/negative_retrieval/` — scoring
+
+| File | What it does | Why it exists |
+|---|---|---|
+| `answerability.py` | Exact normalized match for the expected value or abstention token | Preserves the strict output-contract metric separately from the optional semantic `llm_judge`; stores rule version, answerability, and correctness as evaluation details |
+
+This experiment is **not comparable** with NIAH, NIAH_distractor, or NIAH_multihop. It measures whether the model answers a present fact or abstains on an absent query under the same fact context. Its synthetic background and curated fact bank are construction variables and are fingerprinted.
+
 Data: `data/long_range_dependency/NIAH/filler_text.txt` is *War and Peace*
 (**not neutral** — its opening court intrigue is answered instead of the needle
 34 times, §1.9) and `needles.txt` holds six needles whose wording spans **19
@@ -157,6 +172,7 @@ user asked for the default" from "the user did not ask").
 | `tests/evaluation/test_compliance.py` | A **bare but wrong** answer still scores 1.0 — if that ever fails, the rule has collapsed into `lexical_exact_match` and the 2×2 is gone |
 | `tests/benchmarks/test_haystack_identity.py` | **The constraint the whole archive rests on.** Three pinned digests, an independent reference implementation over the full grid, and a replay rebuilding 166 archived fingerprints end to end. The reference leg is deliberately *not* a call to `create_haystack` — that now delegates to `build_haystack`, so comparing against it would be a tautology |
 | `tests/benchmarks/test_keyed_families.py` | The keyed premise: every needle costs **the same token count**, one value shape, none present in the filler; background depths cannot collide with target depths; the pointer **never** carries the answer; changing a decoy changes the fingerprint |
+| `tests/benchmarks/test_negative_retrieval.py` | Paired contexts are identical, present/absent labels balanced, IDs and fingerprints unique, absent entities absent, context lengths near target, and `num_ctx` nonzero and bucketed |
 
 ## Outputs
 

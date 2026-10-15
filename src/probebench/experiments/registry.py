@@ -10,6 +10,9 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from probebench.core.config import RunConfig
+from probebench.experiments.long_context_understanding.negative_retrieval.run import (
+    run_negative_retrieval,
+)
 from probebench.experiments.long_range_dependency.NIAH.run import run_niah
 from probebench.experiments.long_range_dependency.NIAH_distractor.run import (
     run_niah_distractor,
@@ -86,6 +89,20 @@ EXPERIMENTS: tuple[ExperimentSpec, ...] = (
         data_files=(
             f"{NIAH_DATA_DIR}/filler_text.txt",
             f"{NIAH_DISTRACTOR_DATA_DIR}/keyed_needles.jsonl",
+        ),
+        uses_context_sweep=True,
+    ),
+    ExperimentSpec(
+        family="long_context_understanding",
+        name="negative_retrieval",
+        description=(
+            "Answerability under long context: present fact, absent facts, "
+            "and abstention with explicit evidence checks."
+        ),
+        runner=run_negative_retrieval,
+        data_files=(
+            "data/long_context_understanding/negative_retrieval/filler_text.txt",
+            "data/long_context_understanding/negative_retrieval/entities.jsonl",
         ),
         uses_context_sweep=True,
     ),

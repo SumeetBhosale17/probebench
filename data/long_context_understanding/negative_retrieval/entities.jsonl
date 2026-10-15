@@ -1,0 +1,10 @@
+{"id":"entity_01","name":"registry key KESTREL-01","value":"BBD-1000","evidence":"The assigned access token for registry key KESTREL-01 is BBD-1000.","answerable":true}
+{"id":"entity_02","name":"registry key KESTREL-02","value":"BBF-1001","evidence":"The assigned access token for registry key KESTREL-02 is BBF-1001.","answerable":true}
+{"id":"entity_03","name":"registry key KESTREL-03","value":"BBG-1002","evidence":"The assigned access token for registry key KESTREL-03 is BBG-1002.","answerable":true}
+{"id":"entity_04","name":"registry key KESTREL-04","value":"BBH-1003","evidence":"The assigned access token for registry key KESTREL-04 is BBH-1003.","answerable":true}
+{"id":"entity_05","name":"registry key KESTREL-05","value":"BBJ-1004","evidence":"The assigned access token for registry key KESTREL-05 is BBJ-1004.","answerable":true}
+{"id":"entity_06","name":"registry key KESTREL-06","value":"BBK-1005","evidence":"The assigned access token for registry key KESTREL-06 is BBK-1005.","answerable":true}
+{"id":"entity_07","name":"registry key KESTREL-07","value":"BBM-1006","evidence":"The assigned access token for registry key KESTREL-07 is BBM-1006.","answerable":true}
+{"id":"entity_08","name":"registry key KESTREL-08","value":"BBN-1007","evidence":"The assigned access token for registry key KESTREL-08 is BBN-1007.","answerable":true}
+{"id":"entity_09","name":"registry key KESTREL-09","value":"NO_EVIDENCE_FOUND","evidence":"","answerable":false}
+{"id":"entity_10","name":"registry key KESTREL-10","value":"NO_EVIDENCE_FOUND","evidence":"","answerable":false}

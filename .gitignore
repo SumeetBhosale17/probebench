@@ -77,7 +77,7 @@ htmlcov/
 # Raw run output (JSONL + logs) is local-only, not versioned: it is
 # regenerated per run, and one archived run already tripped the repo's
 # 500 KB pre-commit file-size limit.
-results/raw/
+results/raw/*.jsonl
 
 # ----------------------------
 # Ollama / Local Models

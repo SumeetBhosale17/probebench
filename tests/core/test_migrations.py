@@ -242,7 +242,9 @@ def test_stored_compliance_still_matches_the_current_rule() -> None:
     silently under one key.
     """
 
-    from probebench.evaluation.long_range_dependency.NIAH.compliance import is_answer_only
+    from probebench.evaluation.long_range_dependency.NIAH.compliance import (
+        is_answer_only,
+    )
 
     for path in sorted(RAW_RESULTS.glob("*.jsonl")):
         for line in path.read_text(encoding="utf-8").splitlines():
@@ -310,7 +312,7 @@ def test_no_archived_record_gains_an_inventory() -> None:
             # Records WRITTEN at 1.5 carry a real inventory - that is the whole
             # point of the version. The guard is about what a MIGRATION may
             # invent, so it applies only to records that predate the field.
-            if record.get("schema_version") == "1.5":
+            if record.get("schema_version") in {"1.5", "1.6"}:
                 continue
 
             migrated = migrate_record(record)

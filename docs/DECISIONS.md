@@ -411,6 +411,48 @@ never meaningful to begin with. There is no option that preserves it.
 
 **What we got.** not yet.
 
+## D-027 — Use nonce facts to limit parametric-knowledge leakage
+Status: accepted | Decided: 2026-10-14 | Trigger: J-036, §1.21 | Changes what is measured: yes
+
+**The problem.** The first positive fact bank contains public facts a small model may answer from memory. Exact-match scoring cannot reveal whether the answer came from the prompt (J-036).
+
+**Options.**
+- Keep public facts and describe the task as answerability under an evidence-only instruction. This preserves natural facts, but positive accuracy cannot establish context use.
+- Replace them with nonce-style synthetic keys and values under one fixed sentence template. This makes answers difficult to retrieve from parametric memory and improves construction control, but narrows the claim to synthetic exact-fact retrieval.
+- Add evidence-ablation controls before changing the corpus. This can measure memory leakage directly, but requires additional model calls and adds an experimental axis before a valid baseline exists.
+
+**Decision.** Keep D-025's paired present/absent context design, but replace the familiar facts with fixed synthetic registry keys and code-shaped values. Use one sentence template, equal key/value shapes, unique values, and absent keys from the same namespace that never occur in context or filler. Do not claim that this proves grounding: add evidence ablation as a required follow-up before making that claim.
+
+**Rejected.**
+- *Retain public facts as the initial positive set.* `Revisit if:` a separate study shows parametric recall does not materially affect these exact queries, or the research question is explicitly narrowed to compliance with an evidence-only instruction rather than evidence use.
+- *Treat nonce construction as proof of context grounding.* `Revisit if:` never without the ablation control; a low prior probability of memorizing a nonce is not evidence of source use.
+- *Run ablation before the construction and preflight baseline are valid.* `Revisit if:` the baseline cannot be made interpretable without that control; it then becomes part of the initial design, not a later validation.
+
+**Predicted.** The bank will preserve exact ground truth while removing familiar answer values. Automated tests will verify uniform value shape and token cost, and that absent keys and answer values do not occur in filler. A future evidence-ablation comparison will remain necessary to support a grounding claim.
+
+**What we got.** The curated bank now uses eight fixed `KESTREL` keys with nonce access codes. Tests pin the `AAA-9999` value shape, uniform `cl100k_base` evidence/value token costs, and absence of answer values from the seed filler. Evidence-ablation remains unrun, so the grounding claim remains open under §1.21.
+
+## D-026 — Generate deterministic neutral background for negative retrieval
+Status: accepted | Decided: 2026-10-14 | Trigger: J-035 | Changes what is measured: yes
+
+**The problem.** The supplied filler paragraph is 155 tokens, while the first configured case requests 4,000. The shared haystack builder correctly truncates but never pads (J-035). NIAH's existing 3.3 MB filler is *War and Peace*, whose court intrigue was already returned instead of the planted answer 34 times (LIMITATIONS §1.9); borrowing it would bring a known semantic confound into this new task.
+
+**Options.**
+- Repeat the short paragraph. This reaches the length cheaply, but repeats the same semantic content hundreds of times and does not provide a realistic long context.
+- Reuse the NIAH filler. This provides sufficient length and cross-family reuse, but imports a known, measured semantic distractor and makes the new task less controlled.
+- Extend the short seed with deterministic synthetic administrative records generated from fixed vocabularies. This yields reproducible, varied filler with no target facts, but measures answerability in a synthetic document rather than natural prose.
+
+**Decision.** Generate deterministic synthetic administrative records from a fixed template and fixed word lists, append them to the short seed, and continue the same corpus to the largest configured target. Hash the complete generated filler in every case fingerprint. Test that tokenized contexts reach each target within the tokenizer's re-encoding behavior and that no answer value is introduced by the generated records.
+
+**Rejected.**
+- *Repeat the paragraph.* `Revisit if:` never for a measured context; repeated prose is a structural cue and does not supply varied long-context distractors.
+- *Reuse the NIAH corpus.* `Revisit if:` a separate controlled comparison establishes that the known semantic distractor does not affect answerability and the cross-family reuse is explicitly part of the design.
+- *Download a natural-language corpus.* `Revisit if:` source, license, tokenizer, and corpus-version provenance are recorded and its semantic distractors are audited against all queries and answers.
+
+**Predicted.** For every requested target, assembled contexts will be close to that token count, `num_ctx` will be nonzero and bucketed, and generated filler will contain no answer value from the entity bank.
+
+**What we got.** The dry run generated 160 cases and planned only nonzero buckets `[4608, 8704, 16896, 32768]`, each within the reported memory budget. Focused tests cover all four lengths and found re-encoded contexts within `fact_count` tokens of target (maximum eight tokens). The generated filler and its digest are deterministic; a live model run remains unperformed.
+
 ---
 
 ## D-007 — Diagnose with labels, not with a fourth metric
@@ -1799,3 +1841,57 @@ disappearing under rotation — would mean it was an artifact of the single fixe
 layout, and J-032's rank paragraph should be withdrawn.
 
 **What we got.** not yet.
+
+## D-025 — Paired answerability cases over a fixed fact context
+Status: accepted | Decided: 2026-10-14 | Trigger: J-034 | Changes what is measured: yes
+
+**The problem.** The current negative-retrieval scaffold emitted duplicate one-fact cases, treated an explicit absence sentence as a negative, and planned `num_ctx=0` (J-034). A runnable data path alone would not define an answerability measurement.
+
+**Options.**
+- Keep one query per fact and repair IDs/metadata. This is smaller, but `entity_counts` would still not describe the number of facts in a context and there would be no paired control for absence.
+- Build one multi-fact context and ask one present query plus one absent query against the identical context. This directly controls context content while answerability changes, but requires enough distinct facts and limits the maximum context inventory to the fact bank.
+- Remove the experiment from the registry until a corpus and design are ready. This avoids exposing an invalid experiment, but delays the first answerability implementation.
+
+**Decision.** Use paired cases over the same context. For each target length, focal depth, and fact count, create one context with the selected number of distinct answerable facts. Place the positive query's fact at the requested depth; pair it with an absent query against the exact same context, leaving the absent query's entity out of both context and filler. Balance present and absent cases. `entity_counts` is limited to `(4, 8)` because the current fact bank has eight answerable records; do not silently claim a 16-fact condition. Bucket and record each case's `num_ctx` using the existing NIAH rule.
+
+**Rejected.**
+- *Single-fact cases with only a case-ID repair.* `Revisit if:` the research question changes from answerability under competing context to isolated fact recognition; it does not test the current question.
+- *Explicit "no matching record" text for absent cases.* `Revisit if:` never as a negative condition; it gives the model the label instead of requiring evidence checking.
+- *Keep the 16-fact condition with the current eight-fact inventory.* `Revisit if:` the curated fact bank has at least 16 distinct, validated answerable records and a test proves the queried target is not duplicated.
+- *Real-document corpus now.* `Revisit if:` a sourced corpus and auditable completeness/absence annotations are available; without them, "absent" is not ground truth.
+- *Unregister the experiment.* `Revisit if:` the paired construction cannot meet uniqueness, balance, and input-provenance tests.
+
+**Predicted.** For every `(target_tokens, depth, fact_count)` cell, the generated cases will contain equal present/absent counts. Each pair will have identical context text and distinct questions, case keys, and fingerprints. Every case will request a nonzero, bucketed `num_ctx` based on its prompt length and configured buffer. A missing queried fact will not appear in the context.
+
+**What we got.** The focused tests confirm balanced present/absent pairs sharing identical context, unique case IDs/keys/fingerprints, absent query names outside the context, and nonzero bucketed `num_ctx`. The full suite passes. The implementation supports fact counts 4 and 8; 16 is rejected because the bank has only eight answerable facts.
+
+### Record note — 2026-10-14
+
+**Correction to D-025 `What we got`.** The final full test suite did not complete. `uv run pytest -q --ignore=tests/benchmarks/test_haystack_identity.py` passed 131 tests. The complete suite and the isolated identity replay were interrupted with exit 130 during tokenization. The focused negative-retrieval suite passes 6 tests.
+
+**Placement.** D-026 and D-027 appear earlier in this file than D-025 because an edit matched repeated `What we got` markers. Their IDs are authoritative; the decision text is preserved in place rather than rewriting or deleting append-only records.
+
+### D-028 outcome addendum — 2026-10-15
+
+The follow-up 80-case 4K/8K pilot again showed no judge recovery: 37 rows scored `(rule=1, judge=1)`, 42 scored `(0,0)`, and one natural-language abstention scored `(1,0.99)`. Present exact accuracy was 1/20 at 4K and 4/20 at 8K; absent exact accuracy was 16/20 and 17/20. See J-039. This strengthens the conclusion that the judge currently adds little beyond the exact rule, but does not establish equivalence because no human-labeled set or prose-correct cases were evaluated.
+
+## D-028 — Add semantic judge as a separate answerability signal
+Status: accepted | Decided: 2026-10-15 | Trigger: J-037 | Changes what is measured: yes
+
+**The problem.** The strict rule distinguishes correct output tokens, but its pilot scored 20/20 absent cases and only 3/20 present cases exactly (J-037). A correct value in prose and a plausible abstention currently remain indistinguishable from wrong answers to the sole metric.
+
+**Options.**
+- Keep exact matching as the only score. It is deterministic and replayable, but does not credit a semantically correct value wrapped in prose or a natural-language abstention.
+- Add the existing `OllamaJudge` as a second evaluator while retaining the exact rule. This permits semantic scoring and keeps the exact contract visible, at the cost of another model call, latency, and judge-model validity requirements.
+- Replace the rule metric with an LLM score. This reduces apparent zero scores, but removes the reproducible exact-output measurement and makes the evaluator itself responsible for both correctness and format.
+
+**Decision.** Add the existing `OllamaJudge` conditionally when `config.judge.enabled` is true. It emits `llm_judge` alongside `answerability_exact_match`; it receives the stored question, expected answer, and prediction, but no full long context. Disable groundedness for this family because the current NIAH groundedness contract expects one source sentence and would not prove evidence use here. Preserve `--no-judge` as the exact-rule-only mode, and warn when the judge model equals the generation model.
+
+**Rejected.**
+- *Use the judge score in place of exact matching.* `Revisit if:` the research question stops including exact output compliance; otherwise the two behaviors must remain separable.
+- *Claim the judge verifies context grounding.* `Revisit if:` only after an evidence-ablation control demonstrates sensitivity to the provided fact; expected-answer comparison alone cannot establish source use (§1.21).
+- *Add another custom evaluator or judge prompt.* `Revisit if:` the existing judge contract fails the focused pilot; reuse avoids duplicating a prompt that would otherwise drift independently.
+
+**Predicted.** With `--judge-model` set to an independent model, semantically correct explanations and abstentions can receive nonzero/high `llm_judge` scores while exact-output failures remain `answerability_exact_match=0`. Judge scores will not be treated as validated ground truth; self-judged runs remain explicitly warned and non-reportable.
+
+**What we got.** A 40-case 4K pilot with generation `qwen3:0.6b` and judge `qwen3:4b` completed. The scores agreed on every row: 22 both correct, 18 both incorrect; the judge added no semantic recovery in this sample (J-038). Keep both metrics, but treat judge validity as unestablished until evaluated against human-labeled prose-correct and wrong answers.

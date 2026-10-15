@@ -244,6 +244,7 @@ ProbeBench result file.
 | Shared experiment pipeline | **built** | `experiments/pipeline.py` (D-021) — the KV-probe/preflight/two-phase ordering exists once |
 | `NIAH_distractor` (keyed discrimination) | **built, k=0 run** | k ∈ {0,1,2,4,8} decoys (D-022). **Calibration done: keyed-vs-legacy wording delta is −4.5 points** (D-023); k>0 still unrun |
 | `NIAH_multihop` (two-hop composition) | **built, first run done** | Produced the project's first deliberate failures (J-031, J-032). Registry rotation added (D-024) — rank and subject identity are now separable |
+| `negative_retrieval` (paired answerability) | **built, 4k pilot run** | Paired present/absent queries on identical multi-fact contexts (D-025), deterministic synthetic filler (D-026), nonce fact bank (D-027), optional independent `llm_judge` (D-028). Judge agreed exactly with the rule on the pilot (J-038); judge validity (§1.22) and evidence grounding (§1.21) remain unvalidated. Not comparable with retrieval-family scores |
 | Case identity (`case_key`, `case_fingerprint`) | **built** | `core/case_identity.py`, plus one `identity.py` per family (D-012, D-015) |
 | Hardware provenance per run | **built** | `core/hostinfo.py` (D-013); null when Ollama is remote |
 | KV precision measured, not assumed | **built** | `core/kvprobe.py` (D-017); a mismatched run refuses to start |
@@ -257,11 +258,15 @@ ProbeBench result file.
 | Aggregation / reporting across runs | **partly wired** | `load.py` is live; `markdown.py`, `csv.py`, `json.py` still dead (§5.1) |
 
 **What ProbeBench is today, stated honestly: a scorer with unusually good
-plumbing, plus a genuinely novel memory-feasibility model.** It emits three
-floats per case — `lexical_exact_match`, `semantic_similarity`, `llm_judge` —
-and, since D-010, exactly one categorical field: `grounded`, which fired on
-**1 of 44** archived records. That is a first probe of the label tier, not the
-taxonomy; nothing else says *how* a response was wrong.
+plumbing, plus a genuinely novel memory-feasibility model.** The long-range
+retrieval family emits three floats per case — `lexical_exact_match`,
+`semantic_similarity`, `llm_judge` — and, since D-010, exactly one
+categorical field: `grounded`, which fired on **1 of 44** archived records.
+The separate `negative_retrieval` experiment emits
+`answerability_exact_match`; it is a different synthetic task, not a fourth
+NIAH metric or a comparable retrieval-family score. `grounded` remains a first
+probe of the label tier, not the taxonomy; nothing else says *how* a response
+was wrong.
 
 **Do not close this gap by adding a fourth metric.** The missing layer is
 categorical, not scalar. `grounded` is deliberately kept out of `metrics` for
@@ -933,3 +938,11 @@ having anything to diagnose.
 
 9. **Reporting layer is dead code (§5.1)** — `markdown.py`, `csv.py`,
    `json.py` are never called.
+10. **Validate the negative-retrieval judge (§1.22).** J-038's independent
+  `qwen3:4b` judge agreed with the exact rule on all 40 pilot cases, so no
+  semantic uplift has been demonstrated. Hand-label correct prose answers,
+  wrong values, unsupported guesses, and abstentions; report per-class
+  agreement before using `llm_judge` as evidence.
+11. **Run evidence ablation for nonce facts (§1.21).** Compare matched
+  present-evidence and removed-evidence contexts before claiming that a
+  correct positive answer came from the supplied context.

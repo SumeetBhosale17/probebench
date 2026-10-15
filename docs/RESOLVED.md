@@ -404,3 +404,18 @@ the honest answer will be a second pipeline, not a fourth field.
 
 *§5.5 is untouched* — the judge and embedding models still bypass the memory
 plan, in the pipeline exactly as they did in the runner.
+
+## R-005 — Negative-retrieval case construction and dry-run preflight
+Resolved: 2026-10-14 | Was: J-034, J-035 | Decision: D-025, D-026, D-027 | Code: `benchmarks/long_context_understanding/negative_retrieval/`, `evaluation/long_context_understanding/negative_retrieval/`
+
+**The limitation.** The first dry run generated 440 records with duplicate IDs, no absent cases, and a memory plan at context zero. The builder inserted one fact per case and inserted an explicit "no matching record" sentence for absent cases. Its 155-token filler could not construct the requested 4,000-token context, and the advertised focused test file did not exist (J-034, J-035).
+
+**Methodology.** Reproduced the dry run and attempted the proposed focused test command; pytest confirmed the file was missing. Read the shared pipeline's `_case_num_ctx()` and found it uses `metadata["model_options"]["num_ctx"]`, which the family did not provide. A new focused suite first failed on case count, absent labels, and missing token metadata. The first paired builder then exposed the short filler source (155 tokens). NIAH's *War and Peace* filler was rejected because §1.9 measured it as a semantic distractor. The synthetic filler was extended deterministically. Tokenized context lengths were measured over the full 4k–32k ladder; final nonce evidence sentences have equal token costs, and decoded contexts differ from target by no more than `fact_count` tokens (maximum eight).
+
+**Decision.** See D-025 for paired contexts, D-026 for deterministic synthetic background, and D-027 for nonce facts. No additional model call or judge was added.
+
+**Why it works.** Each cell builds one context from distinct answerable facts and emits a positive query plus a negative query against the exact same context. The absent entity is excluded from the facts and filler, so there is no textual abstention cue. Pair IDs and content fingerprints include the measured design and prompt; actual context token counts and bucketed `num_ctx` are stored in the case metadata. The fact bank caps `fact_count` at eight instead of repeating facts to fabricate a 16-fact condition. The evaluator accepts only an exact normalized value or the abstention token.
+
+**How we know.** `uv run pytest tests/benchmarks/test_negative_retrieval.py -q` passes 6 tests. `uv run pytest -q --ignore=tests/benchmarks/test_haystack_identity.py` passes 131 tests; the full run was interrupted during the expensive haystack-identity tokenization replay. Focused Ruff passes; `uv run pyright` reports 0 errors. The CLI dry run generates 160 cases and a memory plan at 4,608, 8,704, 16,896, and 32,768 tokens, all marked `OK`.
+
+**Residual.** No live model run has been performed. The experiment measures synthetic exact-fact answerability and is not comparable with NIAH families. Nonce construction does not prove that answers came from the context; evidence ablation remains required under LIMITATIONS §1.21. The eight-fact bank and repetitive administrative filler are not natural-document coverage.
