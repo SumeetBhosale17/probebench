@@ -10,6 +10,10 @@ __pycache__/
 .pyright/
 .mypy_cache/
 
+# Node
+node_modules/
+.npm/
+
 # Virtual Environments
 venv/
 .venv/
